@@ -60,6 +60,6 @@ public:
     StmtFunctionType getExecFunction();
 };
 
-}
+} // namespace abaci::engine
 
 #endif

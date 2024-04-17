@@ -12,6 +12,6 @@ bool parse_statement(std::string& stmt_str, abaci::ast::StmtNode& ast);
 
 bool test_statement(const std::string& stmt_str);
 
-}
+} // namespace abaci::parser
 
 #endif

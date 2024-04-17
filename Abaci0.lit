@@ -25,7 +25,7 @@ Notes added to the descriptions take the form [Note: ...] and may be of a differ
 The class `AbaciValue` is the foundation of the static type system for Abaci0, providing support for seven different types. [Note: Support for `Object` is not yet implemented.] The basis for the class is a "tagged union" where the size of the `value` union is guaranteed to be 64 bits wide. The `type` field is based upon a (plain) enum, and is always initialized when an `AbaciValue` is first created. [Note: The need for this type field is possibly questionable as Abaci0 is a statically-typed language and type information for each symbol is held in the various `DefineScope`s constructed at compile-time. A future improvement could be to omit this field, however it is not clear whether this is technically possible.]
 
 ```cpp
-//@src/utility/Utility.hpp
+//@src/utility/Utility.hpp@+10,-0
 #ifndef Utility_hpp
 #define Utility_hpp
 
@@ -122,16 +122,17 @@ static_assert(sizeof(AbaciValue::value) == 8, "AbaciValue::value must be exactly
 The scoped enum `Operator` lists all of the operators used by Abaci0. A mapping of the string values to these tokens is held in the map `Operators`, with the string values as the keys. The function `mangled()` takes a function name and its input parameter types and returns a unique mangled name, used for Abaci0 function instantiation as unique LLVM functions. Stream output for `AbaciValue` and `Operator`, and generic conversion of any type to a string representation according to its stream output form, are supported.
 
 ```cpp
+//#@+0,-2
 enum class Operator { None, Plus, Minus, Times, Divide, Modulo, FloorDivide, Exponent,
     Equal, NotEqual, Less, LessEqual, GreaterEqual, Greater,
     Not, And, Or, Compl, BitAnd, BitOr, BitXor,
-    Comma, SemiColon, Assign, To };
+    Comma, SemiColon, From, To };
 
 extern const std::unordered_map<std::string,Operator> Operators;
 
 std::string mangled(const std::string& name, const std::vector<AbaciValue::Type>& types);
 
-}
+} // namespace abaci::utility
 
 std::ostream& operator<<(std::ostream& os, const abaci::utility::AbaciValue&);
 
@@ -152,10 +153,12 @@ std::string toString(const T& value) {
 Global container `Operators` is defined in this implementation file as a `std::unordered_map`, with the keys being string representations defined in `parser/Keywords.hpp` and the only client being `parser/Parse.cpp`.
 
 ```cpp
-//@src/utility/Utility.cpp
+//@src/utility/Utility.cpp@+4,-0
 #include "Utility.hpp"
+#include "Report.hpp"
 #include "parser/Keywords.hpp"
 #include <iomanip>
+#include <charconv>
 
 namespace abaci::utility {
 
@@ -182,7 +185,7 @@ const std::unordered_map<std::string,Operator> Operators{
     { BITWISE_XOR, Operator::BitXor },
     { COMMA, Operator::Comma },
     { SEMICOLON, Operator::SemiColon },
-    { ASSIGN, Operator::Assign },
+    { FROM, Operator::From },
     { TO, Operator::To }
 };
 
@@ -249,7 +252,23 @@ Global function `mangled()` creates a unique function name based upon the types 
 ```cpp
 std::string mangled(const std::string& name, const std::vector<AbaciValue::Type>& types) {
     std::string function_name{ "_" };
-    function_name.append(name);
+    for (unsigned char ch : name) {
+        if (ch == '\'') {
+            function_name.push_back('.');
+        }
+        else if (ch >= 0x80) {
+            function_name.push_back('.');
+            char buffer[16];
+            auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer), static_cast<int>(ch), 16);
+            if (ec != std::errc()) {
+                UnexpectedError("Bad numeric conversion.");
+            }
+            function_name.append(buffer);
+        }
+        else {
+            function_name.push_back(ch);
+        }
+    }
     for (const auto parameter_type : types) {
         function_name.append("_");
         function_name.append(std::to_string(parameter_type));
@@ -257,7 +276,7 @@ std::string mangled(const std::string& name, const std::vector<AbaciValue::Type>
     return function_name;
 }
 
-}
+} // namespace abaci::utility
 
 ```
 
@@ -266,7 +285,7 @@ Stream output for `AbaciValue` objects uses tokens defined in `parser/Keywords.h
 ```cpp
 std::ostream& operator<<(std::ostream& os, const abaci::utility::AbaciValue& value) {
     using abaci::utility::AbaciValue;
-    switch (value.type & AbaciValue::TypeMask) {
+    switch (value.type) {
         case AbaciValue::Nil:
             return os << NIL;
         case AbaciValue::Boolean:
@@ -276,7 +295,7 @@ std::ostream& operator<<(std::ostream& os, const abaci::utility::AbaciValue& val
         case AbaciValue::Float:
             return os << std::setprecision(10) << value.value.floating;
         case AbaciValue::Complex:
-            return os << value.value.complex->real << (value.value.complex->imag >= 0 ? "+" : "") << value.value.complex->imag << IMAGINARY1;
+            return os << value.value.complex->real << (value.value.complex->imag >= 0 ? "+" : "") << value.value.complex->imag << IMAGINARY;
         case AbaciValue::String:
             return os.write(reinterpret_cast<const char*>(value.value.str->ptr), value.value.str->len);
         default:
@@ -306,7 +325,7 @@ The class `Environment` forms the basis for lexical and per-function scoping in 
 Both class `Environment::DefineScope` and class `Environment::Scope` hold a shared pointer to their parent, which is `nullptr` in the case of global scope. `Environment`'s `current_define_scope`, `global_define_scope` and `current_scope` are initialized in the constructor as global scope holders. Method `Environment::beginDefineScope()` creates a new sub-scope with either a named parent as the enclosing scope, or the current scope as the enclosing scope, assigning this to `current_define_scope`. Method `Environment::endDefineScope()` sets the `current_define_scope` to its enclosing scope, causing the ending scope to be deleted as no more shared pointers will refer to it. Methods `Environment::beginScope()` and `Environment::endScope()` provide similar behaviour for runtime scopes.
 
 ```cpp
-//@src/utility/Environment.hpp
+//@src/utility/Environment.hpp@+9,-2
 #ifndef Environment_hpp
 #define Environment_hpp
 
@@ -371,7 +390,7 @@ private:
     std::shared_ptr<DefineScope> current_define_scope, global_define_scope;
 };
 
-}
+} // namespace abaci::utility
 
 #endif
 ```
@@ -383,7 +402,7 @@ The purpose of `Environment::setCurrentDefineScope()` is to allow function insta
 Method `setType()` only allows creation of new variables in the current `DefineScope`, and reports an error if it finds one with the same name.
 
 ```cpp
-//@src/utility/Environment.cpp
+//@src/utility/Environment.cpp@+3,-0
 #include "Environment.hpp"
 #include "utility/Report.hpp"
 
@@ -505,7 +524,7 @@ AbaciValue *Environment::Scope::getValue(const std::string& name) {
     }
 }
 
-}
+} // namespace abaci::utility
 ```
 
 ### `Report.hpp`
@@ -513,7 +532,7 @@ AbaciValue *Environment::Scope::getValue(const std::string& name) {
 The error class `AbaciError` and its sub-classes `CompilerError` and `AssertError` inherit from `std::exception`, overriding the `what()` function to provide error diagnostics in client code's `catch` clause. Both `CompilerError` and `AssertError` store the source filename and line number in the protected `message` member of `AbaciError`.
 
 ```cpp
-//@src/utility/Report.hpp
+//@src/utility/Report.hpp@+6,-0
 #ifndef Report_hpp
 #define Report_hpp
 
@@ -568,6 +587,7 @@ public:
 Convenience macros `LogicError()`, `UnexpectedError()` and `Assert()` allow for population of all of the constructor fields of these classes. `LogicError()` is intended for reporting errors due to ill-formed Abaci0 programs, while `UnexpectedError()` and `Assert()` are intended to pinpoint problems in the compiler itself. [Note: Adaptation of the source code to prefer `LogicError()` is not yet complete.]
 
 ```cpp
+//#@+0,-2
 #define LogicError(error_string) { throw AbaciError(error_string); }
 #define UnexpectedError(error_string) { throw CompilerError(error_string, __FILE__, __LINE__); }
 #define Assert(condition) { if (!(condition)) throw AssertError(#condition, __FILE__, __LINE__); }
@@ -582,7 +602,7 @@ Convenience macros `LogicError()`, `UnexpectedError()` and `Assert()` allow for 
 The functionality of the compiler which needs to be made available to the JIT-compiled code at execution time are listed in this header file. The functions are C++ functions declared with C-linkage, ensuring that the unmangled names can be used in the client code. This library is intentionally small, with three output-related functions, one related to operations on complex numbers, and four functions related to environment (specifically `Environment::Scope`) operations.
 
 ```cpp
-//@src/lib/Abaci.hpp
+//@src/lib/Abaci.hpp@+6,-2
 #ifndef Abaci_hpp
 #define Abaci_hpp
 
@@ -617,16 +637,15 @@ void endScope(abaci::utility::Environment *environment);
 Function `printValue()` allows the compiled code to output variables at execution time. The `print(std::ostream)` function from libfmt is used for this task; calling `toString()` produces a `std::string` representation from the stream operator. [Note: Ideally a custom formatter would be used, but issues with the flexibility of `AbaciValue()` and its value layout caused problems with the `constexpr` requirements of such a formatter. However, with the type of the value being output always known at code compilation time, this issue may be addressable.]
 
 ```cpp
-//@src/lib/Abaci.cpp
+//@src/lib/Abaci.cpp@+17,-1
 #include "Abaci.hpp"
 #include "utility/Report.hpp"
+#include "parser/Keywords.hpp"
 #include <complex>
 #include <cstring>
 #include <algorithm>
 #include <fmt/core.h>
 #include <fmt/format.h>
-#include <fmt/ostream.h>
-#include <iostream>
 using fmt::print;
 
 using abaci::utility::AbaciValue;
@@ -636,7 +655,32 @@ using abaci::utility::String;
 using abaci::utility::Environment;
 
 void printValue(AbaciValue *value) {
-    print(std::cout, "{}", toString(*value));
+    switch (value->type) {
+        case AbaciValue::Nil:
+            print("{}", NIL);
+            break;
+        case AbaciValue::Boolean:
+            print("{}", value->value.boolean ? TRUE : FALSE);
+            break;
+        case AbaciValue::Integer:
+            print("{}", static_cast<long long>(value->value.integer));
+            break;
+        case AbaciValue::Float:
+            print("{:.10g}", value->value.floating);
+            break;
+        case AbaciValue::Complex:
+            print("{:.10g}", value->value.complex->real);
+            if (value->value.complex->imag != 0) {
+                print("{:+.10g}{}", value->value.complex->imag, IMAGINARY);
+            }
+            break;
+        case AbaciValue::String:
+            fwrite(reinterpret_cast<const char*>(value->value.str->ptr), value->value.str->len, 1, stdout);
+            break;
+        default:
+            print("{}?", static_cast<int>(value->type));
+            break;
+    }
 }
 
 ```
@@ -645,11 +689,11 @@ Function `printComma()` is intended to pad and separate fields after a `print So
 
 ```cpp
 void printComma() {
-    print(std::cout, "{}", ' ');
+    print("{}", ' ');
 }
 
 void printLn() {
-    print(std::cout, "{}", '\n');
+    print("{}", '\n');
 }
 
 ```
@@ -734,7 +778,7 @@ The solution chosen was to abandon Boost Fusion (along with `x3::variant`) and i
 Definition of this class begins with a forward-declaration and definitions of all of the possible types of the `std::variant`.
 
 ```cpp
-//@src/ast/Expr.hpp
+//@src/ast/Expr.hpp@+9,-1
 #ifndef Expr_hpp
 #define Expr_hpp
 
@@ -792,13 +836,14 @@ private:
     Association association{ Unset };
 };
 
-}
+} // namespace abaci::ast
 
 ```
 
 The class `ValueCall` is then adapted by Boost Fusion to be able to be used with an X3 rule&mdash;this takes place at global (not namespace) scope.
 
 ```cpp
+//#@+0,-2
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::ValueCall, name, args)
 
 #endif
@@ -811,7 +856,7 @@ A slightly simpler problem presents itself for statements generated from X3 rule
 The forward-declaration of class `StmtNode` and its related types begins this header file.
 
 ```cpp
-//@src/ast/Stmt.hpp
+//@src/ast/Stmt.hpp@+10,-1
 #ifndef Stmt_hpp
 #define Stmt_hpp
 
@@ -939,13 +984,14 @@ struct Class : StmtData {
     FunctionList methods;    
 };
 
-}
+} // namespace abaci::ast
 
 ```
 
 At global scope, the AST structs must be adapted to the Boost Fusion library for ease of use with the X3 rules.
 
 ```cpp
+//#@+0,-2
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::CommentStmt, comment_string)
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::PrintStmt, expression, format)
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::InitStmt, name, assign, value)
@@ -971,7 +1017,7 @@ BOOST_FUSION_ADAPT_STRUCT(abaci::ast::Class, name, variables, methods)
 The interface of the parsing functionality is very simple, just three functions, all of which return `bool` (where success is indicated by `true`). It also has only `ast/Stmt.hpp` as a prerequisite, meaning that it does not add much compilation time to client code, and that the implementation file `parser/Parse.cpp` can be modified at will without affecting client code, speeding up the development cycle.
 
 ```cpp
-//@src/parser/Parse.hpp
+//@src/parser/Parse.hpp@+6,-1
 #ifndef Parse_hpp
 #define Parse_hpp
 
@@ -999,9 +1045,10 @@ bool parse_statement(std::string& stmt_str, abaci::ast::StmtNode& ast);
 Finally, the function `test_statement()` does not construct an AST, but merely performs a syntax analysis of the input string (which it does not modify), returning `true` for a valid parse (of a single statement, not allowing trailing input or multiple statements).
 
 ```cpp
+//#@+0,-2
 bool test_statement(const std::string& stmt_str);
 
-}
+} // namespace abaci::parser
 
 #endif
 ```
@@ -1036,7 +1083,7 @@ The file `parser/Parse.cpp` is structured in the following way:
 Most of the contents of namespaces `abaci::utility` and `abaci::ast` are used by this implementation file, however individual `using` declarations (rather than `using namespace`) have been used.
 
 ```cpp
-//@src/parser/Parse.cpp
+//@src/parser/Parse.cpp@+9,-39
 #include "Parse.hpp"
 #include "Keywords.hpp"
 #include "utility/Utility.hpp"
@@ -1128,7 +1175,7 @@ x3::rule<class bit_and_n, ExprNode> const bit_and_n;
 x3::rule<class bit_and, ExprList> const bit_and;
 x3::rule<class comma, Operator> const comma;
 x3::rule<class semicolon, Operator> const semicolon;
-x3::rule<class assign, Operator> const assign;
+x3::rule<class from, Operator> const from;
 x3::rule<class to, Operator> const to;
 x3::rule<class equality_n, ExprNode> const equality_n;
 x3::rule<class equality, ExprList> const equality;
@@ -1194,10 +1241,10 @@ Function `makeNumber` constructs an `AbaciValue()` of type `Complex`, `Floating`
 ```cpp
 auto makeNumber = [](auto& ctx) {
     const auto& str = _attr(ctx);
-    if ((str.find(IMAGINARY1) != std::string::npos) || (str.find(IMAGINARY2) != std::string::npos)) {
-        double f;
-        std::from_chars(str.data(), str.data() + str.size() - 1, f);
-        _val(ctx) = AbaciValue(0, f);
+    if (str.find(IMAGINARY) != std::string::npos) {
+        double imag;
+        std::from_chars(str.data(), str.data() + str.size() - 1, imag);
+        _val(ctx) = AbaciValue(0, imag);
     }
     else if (str.find(DOT) != std::string::npos) {
         double d;
@@ -1303,7 +1350,7 @@ auto getOperator = [](auto& ctx){
 The rules for different number inputs come next; use of `lexeme[...]` flattens the input to a single string.
 
 ```cpp
-const auto number_str_def = lexeme[+digit >> -( string(DOT) >> +digit ) >> -( string(IMAGINARY1) | IMAGINARY2 )];
+const auto number_str_def = lexeme[+digit >> -( string(DOT) >> +digit ) >> -string(IMAGINARY)];
 const auto base_number_str_def = lexeme[string(HEX_PREFIX) >> +xdigit]
     | lexeme[string(BIN_PREFIX) >> +char_('0', '1')]
     | lexeme[string(OCT_PREFIX) >> +char_('0', '7')];
@@ -1341,7 +1388,7 @@ const auto bitwise_compl_def = string(BITWISE_COMPL)[getOperator];
 
 const auto comma_def = string(COMMA)[getOperator];
 const auto semicolon_def = string(SEMICOLON)[getOperator];
-const auto assign_def = string(ASSIGN)[getOperator];
+const auto from_def = string(FROM)[getOperator];
 const auto to_def = string(TO)[getOperator];
 
 ```
@@ -1412,14 +1459,14 @@ const auto print_stmt_def = PRINT >> print_items[MakeStmt<PrintStmt>()];
 Keyword `let` is followed by either `=` (to initialize a constant) or `<-` (to initialize a variable).
 
 ```cpp
-const auto let_items_def = variable >> (equal | assign) >> expression;
+const auto let_items_def = variable >> (equal | from) >> expression;
 const auto let_stmt_def = LET >> let_items[MakeStmt<InitStmt>()];
 ```
 
 Reassignments do no use the `let` keyword.
 
 ```cpp
-const auto assign_items_def = variable >> assign >> expression;
+const auto assign_items_def = variable >> from >> expression;
 const auto assign_stmt_def = assign_items[MakeStmt<AssignStmt>()];
 
 ```
@@ -1511,7 +1558,7 @@ BOOST_SPIRIT_DEFINE(number_str, base_number_str, boolean_str, string_str, value)
 BOOST_SPIRIT_DEFINE(plus, minus, times, divide, modulo, floor_divide, exponent,
     equal, not_equal, less, less_equal, greater_equal, greater,
     logical_and, logical_or, logical_not, bitwise_and, bitwise_or, bitwise_xor, bitwise_compl,
-    comma, semicolon, assign, to)
+    comma, semicolon, from, to)
 BOOST_SPIRIT_DEFINE(expression, logic_or, logic_and, logic_and_n,
     bit_or, bit_or_n, bit_xor, bit_xor_n, bit_and, bit_and_n,
     equality, equality_n, comparison, comparison_n,
@@ -1549,7 +1596,7 @@ bool test_statement(const std::string& stmt_str) {
     return phrase_parse(iter, end, abaci::parser::statement, x3::ascii::space);
 }
 
-}
+} // namespace abaci::parser
 ```
 
 ### `Keywords.hpp`
@@ -1557,7 +1604,7 @@ bool test_statement(const std::string& stmt_str) {
 This header file specifies all of the Abaci0 keywords and symbolic tokens. In order to translate Abaci0 into a non-English language, or provide single (UTF-8) symbols for sequences such as ">=", modifing this file should be all that is required. (Error messages and other diagnostics would still be in English as they are currently hard-coded into the source files.)
 
 ```cpp
-//@src/parser/Keywords.hpp
+//@src/parser/Keywords.hpp@+3,-2
 #ifndef Keywords_hpp
 #define Keywords_hpp
 
@@ -1612,10 +1659,9 @@ constexpr auto *SEMICOLON = ";";
 constexpr auto *COLON = ":";
 constexpr auto *LEFT_PAREN = "(";
 constexpr auto *RIGHT_PAREN = ")";
-constexpr auto *ASSIGN = "<-";
+constexpr auto *FROM = "<-";
 constexpr auto *TO = "->";
-constexpr auto *IMAGINARY1 = "j";
-constexpr auto *IMAGINARY2 = "J";
+constexpr auto *IMAGINARY = "j";
 constexpr auto *HEX_PREFIX = "0x";
 constexpr auto *OCT_PREFIX = "0";
 constexpr auto *BIN_PREFIX = "0b";
@@ -1631,10 +1677,10 @@ Implementation file `codegen/TypeCodeGen.cpp` exists to cover up a hole in the s
 
 ### `CodeGen.hpp`
 
-Class `ExprCodeGen` is initialized from a `JIT` instance, from which it obtains references to `llvm::IRBuilder<>` and `llvm::Module`. Its purpose is to reduce an `ExprNode` tree to a single `StackType`, consisting of an `llvm::Value*` (always an LLVM register) and `AbaciValue::Type` (known at compile-time to due to the static type system). The stack itself is simply a `std::vector<StackType>` qualified with `mutable` so that `operator()` can be declared `const`, and private functions `pop()` and `push()` operate on this stack. After a (single) call to `operator()`, the expected size of the stack is exactly 1, and the contents of this are returned by the `get()` member function. The member function `toBoolean()` creates a truth value for its input (as an `llvm::Value*`), while `promote()` ensures that numeric types are promoted so that the various Math operations they can be applied to entities of the same type.
+This file is declared within a namespace, and defines four classes.
 
 ```cpp
-//@src/codegen/CodeGen.hpp
+//@src/codegen/CodeGen.hpp@+13,-1
 #ifndef CodeGen_hpp
 #define CodeGen_hpp
 
@@ -1650,6 +1696,12 @@ Class `ExprCodeGen` is initialized from a `JIT` instance, from which it obtains 
 
 namespace abaci::codegen {
 
+```
+
+Class `ExprCodeGen` is initialized from a `JIT` instance, from which it obtains references to `llvm::IRBuilder<>` and `llvm::Module`. Its purpose is to reduce an `ExprNode` tree to a single `StackType`, consisting of an `llvm::Value*` (always an LLVM register) and `AbaciValue::Type` (known at compile-time to due to the static type system). The stack itself is simply a `std::vector<StackType>` qualified with `mutable` so that `operator()` can be declared `const`, and private functions `pop()` and `push()` operate on this stack. After a (single) call to `operator()`, the expected size of the stack is exactly 1, and the contents of this are returned by the `get()` member function. The member function `toBoolean()` creates a truth value for its input (as an `llvm::Value*`), while `promote()` ensures that numeric types are promoted so that the various Math operations they can be applied to entities of the same type.
+
+```cpp
+//#@+10,-0
 using llvm::IRBuilder;
 using llvm::Module;
 using llvm::Value;
@@ -1716,6 +1768,7 @@ private:
 The final two classes are initialized from an `Environment*` and a `Cache*` (from `engine/Cache.hpp`). In order to return a type for a particular function, class `TypeEvalGen` maintains a stack, however it is only concerned with the `AbaciValue::Type`. Functions `pop()` and `push()` manage this stack and `get()` expects a size of exactly 1. Functions `operator()` and `promote()` are present, giving some further degree of similarity to class `ExprCodeGen`. Class `TypeCodeGen` has only two more data members (other than the constructor parameters), being a `type_is_set` flag and and `AbaciValue::Type`. These are only set by the specialization of `codeGen()` for an Abaci0 `return` statment, and are queried from client code with method `get()`.
 
 ```cpp
+//#@+0,-2
 class TypeEvalGen {
     mutable std::vector<AbaciValue::Type> stack;
     Environment *environment;
@@ -1765,7 +1818,7 @@ private:
     void codeGen(const T&) const;
 };
 
-}
+} // namespace abaci::codegen
 
 #endif
 ```
@@ -1775,7 +1828,7 @@ private:
 The whole of the `llvm` namespace is made available to this implementation file, together with four other types. The large `operator()` function is based around switching upon the type of the `std::variant` in the `ExprNode` parameter, and in the case of it being an `ExprList`, its arithmetic association.
 
 ```cpp
-//@src/codegen/ExprCodeGen.cpp
+//@src/codegen/ExprCodeGen.cpp@+7,-0
 #include "CodeGen.hpp"
 #include "engine/JIT.hpp"
 #include "utility/Utility.hpp"
@@ -2533,15 +2586,15 @@ Value *ExprCodeGen::toBoolean(StackType& v) const {
     return boolean;
 }
 
-}
+} // namespace abaci::codegen
 ```
 
 ### `StmtCodeGen.cpp`
 
-The whole of the `llvm` namespace is again made available, plus most of the `abaci::ast` namespace. The `operator()` for `StmtList` creates a new `DefineScope` and a new `Scope` before iterating over the statements in the block.
+The whole of the `llvm` namespace is again made available, plus most of the `abaci::ast` namespace.
 
 ```cpp
-//@src/codegen/StmtCodeGen.cpp
+//@src/codegen/StmtCodeGen.cpp@+4,-1
 #include "CodeGen.hpp"
 #include "utility/Utility.hpp"
 #include <llvm/IR/Constants.h>
@@ -2550,6 +2603,12 @@ using namespace llvm;
 
 namespace abaci::codegen {
 
+```
+
+The `operator()` for `StmtList` creates a new `DefineScope` and a new `Scope` before iterating over the statements in the block.
+
+```cpp
+//#@+23,-0
 using abaci::ast::ValueCall;
 using abaci::ast::ExprNode;
 using abaci::ast::ExprList;
@@ -3005,17 +3064,15 @@ void StmtCodeGen::operator()(const StmtNode& stmt) const {
     }
 }
 
-}
+} // namespace abaci::codegen
 ```
 
 ### `TypeCodeGen.cpp`
 
 The code for these functions is best examined with reference to the other two implementation files in this directory. It is mostly a "bare-bones" implementation using the minimal amount of code to ensure that function return-type information can be gleaned from the AST.
 
-The layout of `TypeEvalGen::operator()` exactly matches that for class `ExprCodeGen`.
-
 ```cpp
-//@src/codegen/TypeCodeGen.cpp
+//@src/codegen/TypeCodeGen.cpp@+4,-0
 #include "CodeGen.hpp"
 #include "utility/Utility.hpp"
 #include <llvm/IR/Constants.h>
@@ -3024,6 +3081,12 @@ using namespace llvm;
 
 namespace abaci::codegen {
 
+```
+
+The layout of `TypeEvalGen::operator()` exactly matches that for class `ExprCodeGen`.
+
+```cpp
+//#@+23,-0
 using abaci::ast::ValueCall;
 using abaci::ast::ExprNode;
 using abaci::ast::ExprList;
@@ -3424,7 +3487,7 @@ void TypeCodeGen::operator()(const StmtNode& stmt) const {
     }
 }
 
-}
+} // namespace abaci::codegen
 ```
 
 ## Directory `engine`
@@ -3438,7 +3501,7 @@ The most important parts of the interface are located in `JIT.hpp` and `JIT.cpp`
 Three nested classes are defined: `Class`, `Function` and `Instantiation`. The member variables of the (usually single) `Cache` instance in the client code are containers for any number of instances of these three types. Member functions to add to or access these containers are provided.
 
 ```cpp
-//@src/engine/Cache.hpp
+//@src/engine/Cache.hpp@+12,-2
 #ifndef Cache_hpp
 #define Cache_hpp
 
@@ -3492,7 +3555,7 @@ private:
     std::vector<Instantiation> instantiations;
 };
 
-}
+} // namespace abaci::engine
 
 #endif
 ```
@@ -3502,7 +3565,7 @@ private:
 Member functions `addClassTemplate()` and `addFunctionTemplate()` allow adding from the AST to the cache.
 
 ```cpp
-//@src/engine/Cache.cpp
+//@src/engine/Cache.cpp@+4,-0
 #include "Cache.hpp"
 #include "codegen/CodeGen.hpp"
 #include "utility/Report.hpp"
@@ -3618,7 +3681,7 @@ Cache::Type Cache::getCacheType(const std::string& name) const {
     return CacheNone;
 }
 
-}
+} // namespace abaci::engine
 ```
 
 ### `JIT.hpp`
@@ -3626,7 +3689,7 @@ Cache::Type Cache::getCacheType(const std::string& name) const {
 This class contains the basis for activating an `llvm::orc::LLJIT`, with all of the LLVM types needed to create a callable JIT-compiled function dynamically. It is created with a module name, function name, `Environment` pointer and `Cache` pointer, initializing an `LLVMContext` and `Module`. All of these data members are accessible via "getters", along with `getNamedType()` for Abaci0 types `struct.Complex`, `struct.String` etc. used by classes `ExprCodeGen` and `StmtCodeGen`.
 
 ```cpp
-//@src/engine/JIT.hpp
+//@src/engine/JIT.hpp@+13,-0
 #ifndef JIT_hpp
 #define JIT_hpp
 
@@ -3696,10 +3759,11 @@ public:
 The call to `JIT::getExecFunction` calls finalization of the named function, as well as creation of a JIT module and dynamic library catering for any library calls the compiled code may make. It then returns a typed pointer for calling by the client code.
 
 ```cpp
+//#@+0,-2
     StmtFunctionType getExecFunction();
 };
 
-}
+} // namespace abaci::engine
 
 #endif
 ```
@@ -3709,7 +3773,7 @@ The call to `JIT::getExecFunction` calls finalization of the named function, as 
 Function `initialize()` contains boilerplate code related to setting values for library function types and linkage as well as the types used to allocate `AbaciValue` instances on the LLVM side. A loop over all the function instantiations stored in the cache involves calls to class `StmtCodeGen` (with `exit_block` and `DefineScope` depth). If the function does not end with `return` then a branch into `exit_block` is needed. The function ends with starting the statement (REPL) or block (file) execution function, setting an insert point for further code generated.
 
 ```cpp
-//@src/engine/JIT.cpp
+//@src/engine/JIT.cpp@+14,-0
 #include "JIT.hpp"
 #include "codegen/CodeGen.hpp"
 #include "lib/Abaci.hpp"
@@ -3841,7 +3905,7 @@ StmtFunctionType JIT::getExecFunction() {
     return reinterpret_cast<StmtFunctionType>(func_symbol->getAddress());
 }
 
-}
+} // namespace abaci::engine
 ```
 
 ## Compiler Driver
@@ -3853,7 +3917,7 @@ The main program contained in this file is not intended to be fully-featured, bu
 In the case of a single program argument (`./abaci0 script.abaci`), the file is read in one go before `ast`, `environment` and `functions` are created (as empty). The call to `parse_block()` returns `true` if successful, causing use of class `TypeCodeGen` over the whole program. If no errors are caused by this stage, `jit` and `code_gen` are created and the resulting `programFunc` is called before the main program exits. Syntax errors cause the message `"Could not parse file."`, while other errors would result in exceptions being thrown. ERrors are caught and the main program exits with a non-zero failure code.
 
 ```cpp
-//@src/main.cpp
+//@src/main.cpp@+14,-0
 #include "ast/Expr.hpp"
 #include "ast/Stmt.hpp"
 #include "parser/Parse.hpp"
@@ -3868,7 +3932,7 @@ In the case of a single program argument (`./abaci0 script.abaci`), the file is 
 #include <string>
 using fmt::print;
 
-const std::string version = "0.8.0 (2024-Apr-09)";
+const std::string version = "0.8.2 (2024-Apr-17)";
 
 int main(const int argc, const char **argv) {
     if (argc == 2) {
@@ -4014,4 +4078,3 @@ mkdir build && cd build
 cmake ..
 make
 ```
-

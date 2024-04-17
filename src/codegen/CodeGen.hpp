@@ -118,6 +118,6 @@ private:
     void codeGen(const T&) const;
 };
 
-}
+} // namespace abaci::codegen
 
 #endif

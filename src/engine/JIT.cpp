@@ -124,4 +124,4 @@ StmtFunctionType JIT::getExecFunction() {
     return reinterpret_cast<StmtFunctionType>(func_symbol->getAddress());
 }
 
-}
+} // namespace abaci::engine

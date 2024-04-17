@@ -77,13 +77,13 @@ static_assert(sizeof(AbaciValue::value) == 8, "AbaciValue::value must be exactly
 enum class Operator { None, Plus, Minus, Times, Divide, Modulo, FloorDivide, Exponent,
     Equal, NotEqual, Less, LessEqual, GreaterEqual, Greater,
     Not, And, Or, Compl, BitAnd, BitOr, BitXor,
-    Comma, SemiColon, Assign, To };
+    Comma, SemiColon, From, To };
 
 extern const std::unordered_map<std::string,Operator> Operators;
 
 std::string mangled(const std::string& name, const std::vector<AbaciValue::Type>& types);
 
-}
+} // namespace abaci::utility
 
 std::ostream& operator<<(std::ostream& os, const abaci::utility::AbaciValue&);
 

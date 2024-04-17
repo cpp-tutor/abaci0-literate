@@ -42,6 +42,8 @@ Numerous things to add before a 1.0.0 release. Please raise issues or pull reque
 
 * **0.8.0** (2024-Apr-09) Initial release, believed fully working but not complete (no class instances or method calls).
 
+* **0.8.2** (2024-Apr-17) Improvements to processed manuscript and minor changes to code.
+
 ## License
 
 All writing and source code released under a Creative Commmons License, &copy;2023-24 Richard Spencer

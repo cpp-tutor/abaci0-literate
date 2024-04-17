@@ -89,4 +89,4 @@ AbaciValue *Environment::Scope::getValue(const std::string& name) {
     }
 }
 
-}
+} // namespace abaci::utility

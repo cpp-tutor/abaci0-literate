@@ -1,12 +1,11 @@
 #include "Abaci.hpp"
 #include "utility/Report.hpp"
+#include "parser/Keywords.hpp"
 #include <complex>
 #include <cstring>
 #include <algorithm>
 #include <fmt/core.h>
 #include <fmt/format.h>
-#include <fmt/ostream.h>
-#include <iostream>
 using fmt::print;
 
 using abaci::utility::AbaciValue;
@@ -16,15 +15,40 @@ using abaci::utility::String;
 using abaci::utility::Environment;
 
 void printValue(AbaciValue *value) {
-    print(std::cout, "{}", toString(*value));
+    switch (value->type) {
+        case AbaciValue::Nil:
+            print("{}", NIL);
+            break;
+        case AbaciValue::Boolean:
+            print("{}", value->value.boolean ? TRUE : FALSE);
+            break;
+        case AbaciValue::Integer:
+            print("{}", static_cast<long long>(value->value.integer));
+            break;
+        case AbaciValue::Float:
+            print("{:.10g}", value->value.floating);
+            break;
+        case AbaciValue::Complex:
+            print("{:.10g}", value->value.complex->real);
+            if (value->value.complex->imag != 0) {
+                print("{:+.10g}{}", value->value.complex->imag, IMAGINARY);
+            }
+            break;
+        case AbaciValue::String:
+            fwrite(reinterpret_cast<const char*>(value->value.str->ptr), value->value.str->len, 1, stdout);
+            break;
+        default:
+            print("{}?", static_cast<int>(value->type));
+            break;
+    }
 }
 
 void printComma() {
-    print(std::cout, "{}", ' ');
+    print("{}", ' ');
 }
 
 void printLn() {
-    print(std::cout, "{}", '\n');
+    print("{}", '\n');
 }
 
 void complexMath(Complex *result, Operator op, Complex *operand1, Complex *operand2) {

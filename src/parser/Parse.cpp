@@ -84,7 +84,7 @@ x3::rule<class bit_and_n, ExprNode> const bit_and_n;
 x3::rule<class bit_and, ExprList> const bit_and;
 x3::rule<class comma, Operator> const comma;
 x3::rule<class semicolon, Operator> const semicolon;
-x3::rule<class assign, Operator> const assign;
+x3::rule<class from, Operator> const from;
 x3::rule<class to, Operator> const to;
 x3::rule<class equality_n, ExprNode> const equality_n;
 x3::rule<class equality, ExprList> const equality;
@@ -138,10 +138,10 @@ x3::rule<class block, StmtList> const block;
 
 auto makeNumber = [](auto& ctx) {
     const auto& str = _attr(ctx);
-    if ((str.find(IMAGINARY1) != std::string::npos) || (str.find(IMAGINARY2) != std::string::npos)) {
-        double f;
-        std::from_chars(str.data(), str.data() + str.size() - 1, f);
-        _val(ctx) = AbaciValue(0, f);
+    if (str.find(IMAGINARY) != std::string::npos) {
+        double imag;
+        std::from_chars(str.data(), str.data() + str.size() - 1, imag);
+        _val(ctx) = AbaciValue(0, imag);
     }
     else if (str.find(DOT) != std::string::npos) {
         double d;
@@ -212,7 +212,7 @@ auto getOperator = [](auto& ctx){
     }
 };
 
-const auto number_str_def = lexeme[+digit >> -( string(DOT) >> +digit ) >> -( string(IMAGINARY1) | IMAGINARY2 )];
+const auto number_str_def = lexeme[+digit >> -( string(DOT) >> +digit ) >> -string(IMAGINARY)];
 const auto base_number_str_def = lexeme[string(HEX_PREFIX) >> +xdigit]
     | lexeme[string(BIN_PREFIX) >> +char_('0', '1')]
     | lexeme[string(OCT_PREFIX) >> +char_('0', '7')];
@@ -245,7 +245,7 @@ const auto bitwise_compl_def = string(BITWISE_COMPL)[getOperator];
 
 const auto comma_def = string(COMMA)[getOperator];
 const auto semicolon_def = string(SEMICOLON)[getOperator];
-const auto assign_def = string(ASSIGN)[getOperator];
+const auto from_def = string(FROM)[getOperator];
 const auto to_def = string(TO)[getOperator];
 
 const auto identifier_def = lexeme[( ( alpha | '\'' | char_('\200', '\377') ) >> *( alpha | digit | '_' | '\'' | char_('\200', '\377') ) ) - keywords];
@@ -284,9 +284,9 @@ const auto comment_items_def = *(char_ - '\n');
 const auto comment_def = REM >> comment_items[MakeStmt<CommentStmt>()];
 const auto print_items_def = expression >> -( +comma | semicolon );
 const auto print_stmt_def = PRINT >> print_items[MakeStmt<PrintStmt>()];
-const auto let_items_def = variable >> (equal | assign) >> expression;
+const auto let_items_def = variable >> (equal | from) >> expression;
 const auto let_stmt_def = LET >> let_items[MakeStmt<InitStmt>()];
-const auto assign_items_def = variable >> assign >> expression;
+const auto assign_items_def = variable >> from >> expression;
 const auto assign_stmt_def = assign_items[MakeStmt<AssignStmt>()];
 
 const auto if_items_def = expression >> block >> -( ELSE >> block );
@@ -323,7 +323,7 @@ BOOST_SPIRIT_DEFINE(number_str, base_number_str, boolean_str, string_str, value)
 BOOST_SPIRIT_DEFINE(plus, minus, times, divide, modulo, floor_divide, exponent,
     equal, not_equal, less, less_equal, greater_equal, greater,
     logical_and, logical_or, logical_not, bitwise_and, bitwise_or, bitwise_xor, bitwise_compl,
-    comma, semicolon, assign, to)
+    comma, semicolon, from, to)
 BOOST_SPIRIT_DEFINE(expression, logic_or, logic_and, logic_and_n,
     bit_or, bit_or_n, bit_xor, bit_xor_n, bit_and, bit_and_n,
     equality, equality_n, comparison, comparison_n,
@@ -356,4 +356,4 @@ bool test_statement(const std::string& stmt_str) {
     return phrase_parse(iter, end, abaci::parser::statement, x3::ascii::space);
 }
 
-}
+} // namespace abaci::parser

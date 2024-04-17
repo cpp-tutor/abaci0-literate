@@ -103,4 +103,4 @@ Cache::Type Cache::getCacheType(const std::string& name) const {
     return CacheNone;
 }
 
-}
+} // namespace abaci::engine

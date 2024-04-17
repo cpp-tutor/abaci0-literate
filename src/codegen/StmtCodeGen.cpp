@@ -401,4 +401,4 @@ void StmtCodeGen::operator()(const StmtNode& stmt) const {
     }
 }
 
-}
+} // namespace abaci::codegen

@@ -62,6 +62,6 @@ private:
     std::shared_ptr<DefineScope> current_define_scope, global_define_scope;
 };
 
-}
+} // namespace abaci::utility
 
 #endif

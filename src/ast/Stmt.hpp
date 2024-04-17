@@ -115,7 +115,7 @@ struct Class : StmtData {
     FunctionList methods;    
 };
 
-}
+} // namespace abaci::ast
 
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::CommentStmt, comment_string)
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::PrintStmt, expression, format)

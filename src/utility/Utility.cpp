@@ -1,6 +1,8 @@
 #include "Utility.hpp"
+#include "Report.hpp"
 #include "parser/Keywords.hpp"
 #include <iomanip>
+#include <charconv>
 
 namespace abaci::utility {
 
@@ -27,7 +29,7 @@ const std::unordered_map<std::string,Operator> Operators{
     { BITWISE_XOR, Operator::BitXor },
     { COMMA, Operator::Comma },
     { SEMICOLON, Operator::SemiColon },
-    { ASSIGN, Operator::Assign },
+    { FROM, Operator::From },
     { TO, Operator::To }
 };
 
@@ -80,7 +82,23 @@ AbaciValue::~AbaciValue() {
 
 std::string mangled(const std::string& name, const std::vector<AbaciValue::Type>& types) {
     std::string function_name{ "_" };
-    function_name.append(name);
+    for (unsigned char ch : name) {
+        if (ch == '\'') {
+            function_name.push_back('.');
+        }
+        else if (ch >= 0x80) {
+            function_name.push_back('.');
+            char buffer[16];
+            auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer), static_cast<int>(ch), 16);
+            if (ec != std::errc()) {
+                UnexpectedError("Bad numeric conversion.");
+            }
+            function_name.append(buffer);
+        }
+        else {
+            function_name.push_back(ch);
+        }
+    }
     for (const auto parameter_type : types) {
         function_name.append("_");
         function_name.append(std::to_string(parameter_type));
@@ -88,11 +106,11 @@ std::string mangled(const std::string& name, const std::vector<AbaciValue::Type>
     return function_name;
 }
 
-}
+} // namespace abaci::utility
 
 std::ostream& operator<<(std::ostream& os, const abaci::utility::AbaciValue& value) {
     using abaci::utility::AbaciValue;
-    switch (value.type & AbaciValue::TypeMask) {
+    switch (value.type) {
         case AbaciValue::Nil:
             return os << NIL;
         case AbaciValue::Boolean:
@@ -102,7 +120,7 @@ std::ostream& operator<<(std::ostream& os, const abaci::utility::AbaciValue& val
         case AbaciValue::Float:
             return os << std::setprecision(10) << value.value.floating;
         case AbaciValue::Complex:
-            return os << value.value.complex->real << (value.value.complex->imag >= 0 ? "+" : "") << value.value.complex->imag << IMAGINARY1;
+            return os << value.value.complex->real << (value.value.complex->imag >= 0 ? "+" : "") << value.value.complex->imag << IMAGINARY;
         case AbaciValue::String:
             return os.write(reinterpret_cast<const char*>(value.value.str->ptr), value.value.str->len);
         default:

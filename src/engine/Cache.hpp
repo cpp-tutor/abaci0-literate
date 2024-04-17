@@ -51,6 +51,6 @@ private:
     std::vector<Instantiation> instantiations;
 };
 
-}
+} // namespace abaci::engine
 
 #endif

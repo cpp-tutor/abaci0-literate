@@ -351,4 +351,4 @@ void TypeCodeGen::operator()(const StmtNode& stmt) const {
     }
 }
 
-}
+} // namespace abaci::codegen

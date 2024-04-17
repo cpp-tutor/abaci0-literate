@@ -710,4 +710,4 @@ Value *ExprCodeGen::toBoolean(StackType& v) const {
     return boolean;
 }
 
-}
+} // namespace abaci::codegen

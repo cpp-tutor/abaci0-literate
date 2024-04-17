@@ -40,7 +40,7 @@ private:
     Association association{ Unset };
 };
 
-}
+} // namespace abaci::ast
 
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::ValueCall, name, args)
 
