@@ -1,62 +1,64 @@
 #ifndef Keywords_hpp
 #define Keywords_hpp
 
-constexpr auto *AND = "and";
-constexpr auto *CASE = "case";
-constexpr auto *CLASS = "class";
-constexpr auto *ELSE = "else";
-constexpr auto *ENDCASE = "endcase";
-constexpr auto *ENDCLASS = "endclass";
-constexpr auto *ENDFN = "endfn";
-constexpr auto *ENDIF = "endif";
-constexpr auto *ENDWHILE = "endwhile";
-constexpr auto *FALSE = "false";
-constexpr auto *FN = "fn";
-constexpr auto *IF = "if";
-constexpr auto *LET = "let";
-constexpr auto *NIL = "nil";
-constexpr auto *NOT = "not";
-constexpr auto *OR = "or";
-constexpr auto *PRINT = "print";
-constexpr auto *REM = "rem";
-constexpr auto *REPEAT = "repeat";
-constexpr auto *RETURN = "return";
-constexpr auto *TRUE = "true";
-constexpr auto *UNTIL = "until";
-constexpr auto *WHEN = "when";
-constexpr auto *WHILE = "while";
+#define SYMBOLIC(TOKEN, VALUE) inline const char *TOKEN = reinterpret_cast<const char *>(u8##VALUE)
 
-constexpr auto *PLUS = "+";
-constexpr auto *MINUS = "-";
-constexpr auto *TIMES = "*";
-constexpr auto *DIVIDE = "/";
-constexpr auto *MODULO = "%";
-constexpr auto *FLOOR_DIVIDE = "//";
-constexpr auto *EXPONENT = "**";
+SYMBOLIC(AND, "and");
+SYMBOLIC(CASE, "case");
+SYMBOLIC(CLASS, "class");
+SYMBOLIC(ELSE, "else");
+SYMBOLIC(ENDCASE, "endcase");
+SYMBOLIC(ENDCLASS, "endclass");
+SYMBOLIC(ENDFN, "endfn");
+SYMBOLIC(ENDIF, "endif");
+SYMBOLIC(ENDWHILE, "endwhile");
+SYMBOLIC(FALSE, "false");
+SYMBOLIC(FN, "fn");
+SYMBOLIC(IF, "if");
+SYMBOLIC(LET, "let");
+SYMBOLIC(NIL, "nil");
+SYMBOLIC(NOT, "not");
+SYMBOLIC(OR, "or");
+SYMBOLIC(PRINT, "print");
+SYMBOLIC(REM, "rem");
+SYMBOLIC(REPEAT, "repeat");
+SYMBOLIC(RETURN, "return");
+SYMBOLIC(TRUE, "true");
+SYMBOLIC(UNTIL, "until");
+SYMBOLIC(WHEN, "when");
+SYMBOLIC(WHILE, "while");
 
-constexpr auto *EQUAL = "=";
-constexpr auto *NOT_EQUAL = "/=";
-constexpr auto *LESS = "<";
-constexpr auto *LESS_EQUAL = "<=";
-constexpr auto *GREATER_EQUAL = ">=";
-constexpr auto *GREATER = ">";
+SYMBOLIC(PLUS, "+");
+SYMBOLIC(MINUS, "-");
+SYMBOLIC(TIMES, "*");
+SYMBOLIC(DIVIDE, "/");
+SYMBOLIC(MODULO, "%");
+SYMBOLIC(FLOOR_DIVIDE, "//");
+SYMBOLIC(EXPONENT, "**");
 
-constexpr auto *BITWISE_AND = "&";
-constexpr auto *BITWISE_OR = "|";
-constexpr auto *BITWISE_XOR = "^";
-constexpr auto *BITWISE_COMPL = "~";
+SYMBOLIC(EQUAL, "=");
+SYMBOLIC(NOT_EQUAL, "/=");
+SYMBOLIC(LESS, "<");
+SYMBOLIC(LESS_EQUAL, "<=");
+SYMBOLIC(GREATER_EQUAL, ">=");
+SYMBOLIC(GREATER, ">");
 
-constexpr auto *COMMA = ",";
-constexpr auto *DOT = ".";
-constexpr auto *SEMICOLON = ";";
-constexpr auto *COLON = ":";
-constexpr auto *LEFT_PAREN = "(";
-constexpr auto *RIGHT_PAREN = ")";
-constexpr auto *FROM = "<-";
-constexpr auto *TO = "->";
-constexpr auto *IMAGINARY = "j";
-constexpr auto *HEX_PREFIX = "0x";
-constexpr auto *OCT_PREFIX = "0";
-constexpr auto *BIN_PREFIX = "0b";
+SYMBOLIC(BITWISE_AND, "&");
+SYMBOLIC(BITWISE_OR, "|");
+SYMBOLIC(BITWISE_XOR, "^");
+SYMBOLIC(BITWISE_COMPL, "~");
+
+SYMBOLIC(COMMA, ",");
+SYMBOLIC(DOT, ".");
+SYMBOLIC(SEMICOLON, ";");
+SYMBOLIC(COLON, ":");
+SYMBOLIC(LEFT_PAREN, "(");
+SYMBOLIC(RIGHT_PAREN, ")");
+SYMBOLIC(FROM, "<-");
+SYMBOLIC(TO, "->");
+SYMBOLIC(IMAGINARY, "j");
+SYMBOLIC(HEX_PREFIX, "0x");
+SYMBOLIC(OCT_PREFIX, "0");
+SYMBOLIC(BIN_PREFIX, "0b");
 
 #endif

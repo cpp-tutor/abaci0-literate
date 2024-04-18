@@ -949,6 +949,41 @@ Most of the contents of namespaces `abaci::utility` and `abaci::ast` are used by
 
 ```cpp
 namespace abaci::parser {
+
+namespace x3 = boost::spirit::x3;
+using abaci::utility::AbaciValue;
+using abaci::utility::Complex;
+using abaci::utility::Operators;
+using abaci::utility::Operator;
+using abaci::utility::String;
+using abaci::utility::Variable;
+
+using x3::char_;
+using x3::string;
+using x3::lit;
+using x3::lexeme;
+
+using abaci::ast::ExprNode;
+using abaci::ast::ExprList;
+using abaci::ast::ValueCall;
+using abaci::ast::StmtNode;
+using abaci::ast::StmtList;
+using abaci::ast::CommentStmt;
+using abaci::ast::PrintStmt;
+using abaci::ast::PrintList;
+using abaci::ast::InitStmt;
+using abaci::ast::AssignStmt;
+using abaci::ast::IfStmt;
+using abaci::ast::WhileStmt;
+using abaci::ast::RepeatStmt;
+using abaci::ast::CaseStmt;
+using abaci::ast::WhenStmt;
+using abaci::ast::WhenList;
+using abaci::ast::Function;
+using abaci::ast::FunctionCall;
+using abaci::ast::ReturnStmt;
+using abaci::ast::ExprFunction;
+using abaci::ast::Class;
 ```
 
 X3 rule declarations take two template parameters, the class type and the semantic type for the rule. The declaration rule `rule_1` must have a corresponding definition `rule_1_def` later in the implementation file in order to use it with `BOOST_SPIRIT_DEFINE()`. The rules related to expressions are listed first.
@@ -1157,8 +1192,8 @@ auto getOperator = [](auto& ctx){
 The rules for different number inputs come next; use of `lexeme[...]` flattens the input to a single string.
 
 ```cpp
-const auto number_str_def = lexeme[+digit >> -( string(DOT) >> +digit ) >> -string(IMAGINARY)];
-const auto base_number_str_def = lexeme[string(HEX_PREFIX) >> +xdigit]
+const auto number_str_def = lexeme[+char_('0', '9') >> -( string(DOT) >> +char_('0', '9') ) >> -string(IMAGINARY)];
+const auto base_number_str_def = lexeme[string(HEX_PREFIX) >> +( char_('0', '9') | char_('A', 'F') | char_('a', 'f') )]
     | lexeme[string(BIN_PREFIX) >> +char_('0', '1')]
     | lexeme[string(OCT_PREFIX) >> +char_('0', '7')];
 const auto boolean_str_def = string(NIL) | string(FALSE) | string(TRUE);
@@ -1201,7 +1236,8 @@ const auto to_def = string(TO)[getOperator];
 Rules for identifiers as variables and value call components come next.
 
 ```cpp
-const auto identifier_def = lexeme[( ( alpha | '\'' | char_('\200', '\377') ) >> *( alpha | digit | '_' | '\'' | char_('\200', '\377') ) ) - keywords];
+const auto identifier_def = lexeme[( ( char_('A', 'Z') | char_('a', 'z') | char_('\'') | char_('\200', '\377') )
+    >> *( char_('A', 'Z') | char_('a', 'z') | char_('0', '9') | char_('_') | char_('\'') | char_('\200', '\377') ) ) - keywords];
 const auto variable_def = identifier[makeVariable];
 const auto function_value_call_def = identifier >> call_args;
 ```
@@ -1397,63 +1433,65 @@ bool test_statement(const std::string& stmt_str) {
 This header file specifies all of the Abaci0 keywords and symbolic tokens. In order to translate Abaci0 into a non-English language, or provide single (UTF-8) symbols for sequences such as ">=", modifing this file should be all that is required. (Error messages and other diagnostics would still be in English as they are currently hard-coded into the source files.)
 
 ```cpp
-constexpr auto *AND = "and";
-constexpr auto *CASE = "case";
-constexpr auto *CLASS = "class";
-constexpr auto *ELSE = "else";
-constexpr auto *ENDCASE = "endcase";
-constexpr auto *ENDCLASS = "endclass";
-constexpr auto *ENDFN = "endfn";
-constexpr auto *ENDIF = "endif";
-constexpr auto *ENDWHILE = "endwhile";
-constexpr auto *FALSE = "false";
-constexpr auto *FN = "fn";
-constexpr auto *IF = "if";
-constexpr auto *LET = "let";
-constexpr auto *NIL = "nil";
-constexpr auto *NOT = "not";
-constexpr auto *OR = "or";
-constexpr auto *PRINT = "print";
-constexpr auto *REM = "rem";
-constexpr auto *REPEAT = "repeat";
-constexpr auto *RETURN = "return";
-constexpr auto *TRUE = "true";
-constexpr auto *UNTIL = "until";
-constexpr auto *WHEN = "when";
-constexpr auto *WHILE = "while";
+#define SYMBOLIC(TOKEN, VALUE) inline const char *TOKEN = reinterpret_cast<const char *>(u8##VALUE)
 
-constexpr auto *PLUS = "+";
-constexpr auto *MINUS = "-";
-constexpr auto *TIMES = "*";
-constexpr auto *DIVIDE = "/";
-constexpr auto *MODULO = "%";
-constexpr auto *FLOOR_DIVIDE = "//";
-constexpr auto *EXPONENT = "**";
+SYMBOLIC(AND, "and");
+SYMBOLIC(CASE, "case");
+SYMBOLIC(CLASS, "class");
+SYMBOLIC(ELSE, "else");
+SYMBOLIC(ENDCASE, "endcase");
+SYMBOLIC(ENDCLASS, "endclass");
+SYMBOLIC(ENDFN, "endfn");
+SYMBOLIC(ENDIF, "endif");
+SYMBOLIC(ENDWHILE, "endwhile");
+SYMBOLIC(FALSE, "false");
+SYMBOLIC(FN, "fn");
+SYMBOLIC(IF, "if");
+SYMBOLIC(LET, "let");
+SYMBOLIC(NIL, "nil");
+SYMBOLIC(NOT, "not");
+SYMBOLIC(OR, "or");
+SYMBOLIC(PRINT, "print");
+SYMBOLIC(REM, "rem");
+SYMBOLIC(REPEAT, "repeat");
+SYMBOLIC(RETURN, "return");
+SYMBOLIC(TRUE, "true");
+SYMBOLIC(UNTIL, "until");
+SYMBOLIC(WHEN, "when");
+SYMBOLIC(WHILE, "while");
 
-constexpr auto *EQUAL = "=";
-constexpr auto *NOT_EQUAL = "/=";
-constexpr auto *LESS = "<";
-constexpr auto *LESS_EQUAL = "<=";
-constexpr auto *GREATER_EQUAL = ">=";
-constexpr auto *GREATER = ">";
+SYMBOLIC(PLUS, "+");
+SYMBOLIC(MINUS, "-");
+SYMBOLIC(TIMES, "*");
+SYMBOLIC(DIVIDE, "/");
+SYMBOLIC(MODULO, "%");
+SYMBOLIC(FLOOR_DIVIDE, "//");
+SYMBOLIC(EXPONENT, "**");
 
-constexpr auto *BITWISE_AND = "&";
-constexpr auto *BITWISE_OR = "|";
-constexpr auto *BITWISE_XOR = "^";
-constexpr auto *BITWISE_COMPL = "~";
+SYMBOLIC(EQUAL, "=");
+SYMBOLIC(NOT_EQUAL, "/=");
+SYMBOLIC(LESS, "<");
+SYMBOLIC(LESS_EQUAL, "<=");
+SYMBOLIC(GREATER_EQUAL, ">=");
+SYMBOLIC(GREATER, ">");
 
-constexpr auto *COMMA = ",";
-constexpr auto *DOT = ".";
-constexpr auto *SEMICOLON = ";";
-constexpr auto *COLON = ":";
-constexpr auto *LEFT_PAREN = "(";
-constexpr auto *RIGHT_PAREN = ")";
-constexpr auto *FROM = "<-";
-constexpr auto *TO = "->";
-constexpr auto *IMAGINARY = "j";
-constexpr auto *HEX_PREFIX = "0x";
-constexpr auto *OCT_PREFIX = "0";
-constexpr auto *BIN_PREFIX = "0b";
+SYMBOLIC(BITWISE_AND, "&");
+SYMBOLIC(BITWISE_OR, "|");
+SYMBOLIC(BITWISE_XOR, "^");
+SYMBOLIC(BITWISE_COMPL, "~");
+
+SYMBOLIC(COMMA, ",");
+SYMBOLIC(DOT, ".");
+SYMBOLIC(SEMICOLON, ";");
+SYMBOLIC(COLON, ":");
+SYMBOLIC(LEFT_PAREN, "(");
+SYMBOLIC(RIGHT_PAREN, ")");
+SYMBOLIC(FROM, "<-");
+SYMBOLIC(TO, "->");
+SYMBOLIC(IMAGINARY, "j");
+SYMBOLIC(HEX_PREFIX, "0x");
+SYMBOLIC(OCT_PREFIX, "0");
+SYMBOLIC(BIN_PREFIX, "0b");
 ```
 
 ## Directory `codegen`
@@ -3527,7 +3565,7 @@ The main program contained in this file is not intended to be fully-featured, bu
 In the case of a single program argument (`./abaci0 script.abaci`), the file is read in one go before `ast`, `environment` and `functions` are created (as empty). The call to `parse_block()` returns `true` if successful, causing use of class `TypeCodeGen` over the whole program. If no errors are caused by this stage, `jit` and `code_gen` are created and the resulting `programFunc` is called before the main program exits. Syntax errors cause the message `"Could not parse file."`, while other errors would result in exceptions being thrown. ERrors are caught and the main program exits with a non-zero failure code.
 
 ```cpp
-const std::string version = "0.8.2 (2024-Apr-17)";
+const std::string version = "0.8.3 (2024-Apr-18)";
 
 int main(const int argc, const char **argv) {
     if (argc == 2) {

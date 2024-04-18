@@ -21,9 +21,6 @@ using x3::char_;
 using x3::string;
 using x3::lit;
 using x3::lexeme;
-using x3::digit;
-using x3::xdigit;
-using x3::alpha;
 
 using abaci::ast::ExprNode;
 using abaci::ast::ExprList;
@@ -212,8 +209,8 @@ auto getOperator = [](auto& ctx){
     }
 };
 
-const auto number_str_def = lexeme[+digit >> -( string(DOT) >> +digit ) >> -string(IMAGINARY)];
-const auto base_number_str_def = lexeme[string(HEX_PREFIX) >> +xdigit]
+const auto number_str_def = lexeme[+char_('0', '9') >> -( string(DOT) >> +char_('0', '9') ) >> -string(IMAGINARY)];
+const auto base_number_str_def = lexeme[string(HEX_PREFIX) >> +( char_('0', '9') | char_('A', 'F') | char_('a', 'f') )]
     | lexeme[string(BIN_PREFIX) >> +char_('0', '1')]
     | lexeme[string(OCT_PREFIX) >> +char_('0', '7')];
 const auto boolean_str_def = string(NIL) | string(FALSE) | string(TRUE);
@@ -248,7 +245,8 @@ const auto semicolon_def = string(SEMICOLON)[getOperator];
 const auto from_def = string(FROM)[getOperator];
 const auto to_def = string(TO)[getOperator];
 
-const auto identifier_def = lexeme[( ( alpha | '\'' | char_('\200', '\377') ) >> *( alpha | digit | '_' | '\'' | char_('\200', '\377') ) ) - keywords];
+const auto identifier_def = lexeme[( ( char_('A', 'Z') | char_('a', 'z') | char_('\'') | char_('\200', '\377') )
+    >> *( char_('A', 'Z') | char_('a', 'z') | char_('0', '9') | char_('_') | char_('\'') | char_('\200', '\377') ) ) - keywords];
 const auto variable_def = identifier[makeVariable];
 const auto function_value_call_def = identifier >> call_args;
 

@@ -25,6 +25,13 @@ input_line = read_next_line(input_file)
 while True:
     line = next(input_line)
     if line == None:
+        if current_source_file != '':
+            if os.path.dirname(current_source_file) != '':
+                os.makedirs(os.path.dirname(current_source_file), exist_ok=True)
+            print('Writing: ' + current_source_file)
+            with open(current_source_file, 'w') as file:
+                file.write(current_source_file_contents)
+            current_source_file_contents = ''
         break
     if line[:3] == '```':
         add_to_current_source_file = not add_to_current_source_file
@@ -48,18 +55,10 @@ while True:
     elif add_to_current_source_file and current_source_file != '':
         current_source_file_contents += line + '\n'
 
-if current_source_file != '':
-    if os.path.dirname(current_source_file) != '':
-        os.makedirs(os.path.dirname(current_source_file), exist_ok=True)
-    print('Writing: ' + current_source_file)
-    with open(current_source_file, 'w') as file:
-        file.write(current_source_file_contents)
-
 if add_to_current_source_file:
     print('Incomplete source file: ' + current_source_file)
     exit(1)
 
-current_source_file_contents = ''
 current_source_file_begin = 0
 current_source_file_end = 0
 print('Reading: ' + input_file)
