@@ -81,7 +81,7 @@ AbaciValue::~AbaciValue() {
 }
 
 std::string mangled(const std::string& name, const std::vector<AbaciValue::Type>& types) {
-    std::string function_name{ "_" };
+    std::string function_name;
     for (unsigned char ch : name) {
         if (ch == '\'') {
             function_name.push_back('.');
@@ -93,6 +93,7 @@ std::string mangled(const std::string& name, const std::vector<AbaciValue::Type>
             if (ec != std::errc()) {
                 UnexpectedError("Bad numeric conversion.");
             }
+            *ptr = '\0';
             function_name.append(buffer);
         }
         else {
@@ -100,8 +101,14 @@ std::string mangled(const std::string& name, const std::vector<AbaciValue::Type>
         }
     }
     for (const auto parameter_type : types) {
-        function_name.append("_");
-        function_name.append(std::to_string(parameter_type));
+        function_name.push_back('.');
+        char buffer[16];
+        auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer), static_cast<int>(parameter_type), 10);
+        if (ec != std::errc()) {
+            UnexpectedError("Bad numeric conversion.");
+        }
+        *ptr = '\0';
+        function_name.append(buffer);
     }
     return function_name;
 }

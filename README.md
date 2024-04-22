@@ -46,6 +46,8 @@ Numerous things to add before a 1.0.0 release. Please raise issues or pull reque
 
 * **0.8.3** (2024-Apr-18) Allow UTF-8 identifiers, and UTF-8 tokens in `parser/Keywords.hpp`.
 
+* **0.8.6** (2024-Apr-22) Corrections to source manuscript and minor changes to code.
+
 ## License
 
 All writing and source code released under a Creative Commmons License, &copy;2023-24 Richard Spencer

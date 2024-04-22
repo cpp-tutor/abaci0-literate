@@ -22,7 +22,7 @@ using llvm::orc::LLJITBuilder;
 using llvm::orc::LLJIT;
 using abaci::utility::AbaciValue;
 using abaci::utility::Environment;
-using StmtFunctionType = void(*)();
+using ExecFunctionType = void(*)();
 
 class JIT {
     std::unique_ptr<LLVMContext> context;
@@ -32,7 +32,7 @@ class JIT {
     Function *current_function{ nullptr };
     Environment *environment;
     Cache *cache;
-    LLJITBuilder jitBuilder;
+    LLJITBuilder jit_builder;
     llvm::Expected<std::unique_ptr<LLJIT>> jit{ nullptr };
     void initialize();
 public:
@@ -57,7 +57,7 @@ public:
         }
         UnexpectedError("Type not found.")
     }
-    StmtFunctionType getExecFunction();
+    ExecFunctionType getExecFunction();
 };
 
 } // namespace abaci::engine

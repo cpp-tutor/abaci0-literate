@@ -21,6 +21,7 @@ using x3::char_;
 using x3::string;
 using x3::lit;
 using x3::lexeme;
+using x3::ascii::space;
 
 using abaci::ast::ExprNode;
 using abaci::ast::ExprList;
@@ -334,16 +335,16 @@ BOOST_SPIRIT_DEFINE(identifier, variable, function_value_call, keywords,
     expression_function_items, expression_function,
     return_items, return_stmt, class_items, class_template, statement, block)
 
-bool parse_block(const std::string& block_str, abaci::ast::StmtList& ast) {
+bool parse_block(const std::string& block_str, StmtList& ast) {
     auto iter = block_str.begin();
     auto end = block_str.end();
-    return phrase_parse(iter, end, abaci::parser::block, x3::ascii::space, ast);
+    return phrase_parse(iter, end, block, space, ast);
 }
 
-bool parse_statement(std::string& stmt_str, abaci::ast::StmtNode& ast) {
+bool parse_statement(std::string& stmt_str, StmtNode& ast) {
     auto iter = stmt_str.begin();
     auto end = stmt_str.end();
-    bool result = phrase_parse(iter, end, abaci::parser::statement, x3::ascii::space, ast);
+    bool result = phrase_parse(iter, end, statement, space, ast);
     stmt_str = std::string(iter, end);
     return result;
 }
@@ -351,7 +352,7 @@ bool parse_statement(std::string& stmt_str, abaci::ast::StmtNode& ast) {
 bool test_statement(const std::string& stmt_str) {
     auto iter = stmt_str.begin();
     auto end = stmt_str.end();
-    return phrase_parse(iter, end, abaci::parser::statement, x3::ascii::space);
+    return phrase_parse(iter, end, statement, space);
 }
 
 } // namespace abaci::parser

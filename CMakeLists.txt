@@ -14,6 +14,10 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/parser)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/codegen)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/engine)
 
+# Check for X3 header
+include(CheckIncludeFileCXX)
+check_include_file_cxx("boost/spirit/home/x3.hpp" HAVE_BOOST_SPIRIT_X3)
+
 # Find LLVM
 find_package(LLVM REQUIRED CONFIG)
 include_directories(${LLVM_INCLUDE_DIRS})

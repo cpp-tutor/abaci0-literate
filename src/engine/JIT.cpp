@@ -83,13 +83,13 @@ void JIT::initialize() {
     builder.SetInsertPoint(entry_block);
 }
 
-StmtFunctionType JIT::getExecFunction() {
+ExecFunctionType JIT::getExecFunction() {
     builder.CreateRetVoid();
     cache->clearInstantiations();
     //verifyModule(*module, &errs());
     InitializeNativeTarget();
     InitializeNativeTargetAsmPrinter();
-    jit = jitBuilder.create();
+    jit = jit_builder.create();
     if (!jit) {
         UnexpectedError("Failed to create LLJIT instance");
     }
@@ -121,7 +121,7 @@ StmtFunctionType JIT::getExecFunction() {
     if (!func_symbol) {
         UnexpectedError("JIT function not found");
     }
-    return reinterpret_cast<StmtFunctionType>(func_symbol->getAddress());
+    return reinterpret_cast<ExecFunctionType>(func_symbol->getAddress());
 }
 
 } // namespace abaci::engine
