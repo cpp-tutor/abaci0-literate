@@ -57,12 +57,12 @@ class StmtCodeGen {
     IRBuilder<>& builder;
     Module& module;
     Environment *environment;
-    BasicBlock *exitBlock;
+    BasicBlock *exit_block;
     int depth;
 public:
     StmtCodeGen() = delete;
-    StmtCodeGen(JIT& jit, BasicBlock *exitBlock = nullptr, int depth = -1) : jit{ jit }, builder{ jit.getBuilder() }, module{ jit.getModule() }, environment{ jit.getEnvironment() }, exitBlock{ exitBlock }, depth{ depth } {}
-    void operator()(const abaci::ast::StmtList&) const;
+    StmtCodeGen(JIT& jit, BasicBlock *exit_block = nullptr, int depth = -1) : jit{ jit }, builder{ jit.getBuilder() }, module{ jit.getModule() }, environment{ jit.getEnvironment() }, exit_block{ exit_block }, depth{ depth } {}
+    void operator()(const abaci::ast::StmtList&, BasicBlock *exit_block = nullptr) const;
     void operator()(const abaci::ast::StmtNode&) const;
 private:
     template<typename T>
@@ -86,9 +86,7 @@ public:
     TypeEvalGen() = delete;
     TypeEvalGen(Environment *environment, Cache *cache) : environment{ environment }, cache{ cache } {}
     AbaciValue::Type get() const {
-        if (stack.size() != 1) {
-            UnexpectedError("Wrong stack size");
-        }
+        Assert(stack.size() == 1)
         return stack.front();
     }
     void operator()(const abaci::ast::ExprNode&) const;
@@ -98,11 +96,13 @@ public:
 class TypeCodeGen {
     Environment *environment;
     Cache *cache;
+    bool is_function;
     mutable bool type_is_set{ false };
     mutable AbaciValue::Type return_type;
 public:
     TypeCodeGen() = delete;
-    TypeCodeGen(Environment *environment, Cache *cache) : environment{ environment }, cache{ cache } {}
+    TypeCodeGen(Environment *environment, Cache *cache, bool is_function = false)
+        : environment{ environment }, cache{ cache }, is_function{ is_function } {}
     void operator()(const abaci::ast::StmtList&) const;
     void operator()(const abaci::ast::StmtNode&) const;
     auto get() const {

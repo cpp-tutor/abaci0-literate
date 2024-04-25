@@ -29,7 +29,7 @@ using abaci::ast::ExprFunction;
 using abaci::ast::Class;
 using abaci::utility::Operator;
 
-void StmtCodeGen::operator()(const StmtList& stmts) const {
+void StmtCodeGen::operator()(const StmtList& stmts, BasicBlock *exit_block) const {
     if (!stmts.empty()) {
         Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
         Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
@@ -38,8 +38,18 @@ void StmtCodeGen::operator()(const StmtList& stmts) const {
         for (const auto& stmt : stmts) {
             (*this)(stmt);
         }
-        builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
+        if (!dynamic_cast<const ReturnStmt*>(stmts.back().get())) {
+            builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
+            if (exit_block) {
+                builder.CreateBr(exit_block);
+            }
+        }
         environment->endDefineScope();
+    }
+    else {
+        if (exit_block) {
+            builder.CreateBr(exit_block);
+        }
     }
 }
 
@@ -153,11 +163,9 @@ void StmtCodeGen::codeGen(const IfStmt& if_stmt) const {
     BasicBlock *merge_block = BasicBlock::Create(jit.getContext(), "", jit.getFunction());
     builder.CreateCondBr(condition, true_block, false_block);
     builder.SetInsertPoint(true_block);
-    (*this)(if_stmt.true_test);
-    builder.CreateBr(merge_block);
+    (*this)(if_stmt.true_test, merge_block);
     builder.SetInsertPoint(false_block);
-    (*this)(if_stmt.false_test);
-    builder.CreateBr(merge_block);
+    (*this)(if_stmt.false_test, merge_block);
     builder.SetInsertPoint(merge_block);
 }
 
@@ -267,14 +275,12 @@ void StmtCodeGen::codeGen(const CaseStmt& case_stmt) const {
         }
         builder.CreateCondBr(is_match, case_blocks.at(block_number * 2 + 1), case_blocks.at(block_number * 2 + 2));
         builder.SetInsertPoint(case_blocks.at(block_number * 2 + 1));
-        (*this)(when.block);
-        builder.CreateBr(case_blocks.back());
+        (*this)(when.block, case_blocks.back());
         ++block_number;
     }
     if (!case_stmt.unmatched.empty()) {
         builder.SetInsertPoint(case_blocks.at(case_blocks.size() - 2));
-        (*this)(case_stmt.unmatched);
-        builder.CreateBr(case_blocks.back());
+        (*this)(case_stmt.unmatched, case_blocks.back());
     }
     builder.SetInsertPoint(case_blocks.back());
 }
@@ -344,7 +350,7 @@ void StmtCodeGen::codeGen(const ReturnStmt& return_stmt) const {
     for (int i = depth; i < (return_stmt.depth - 1); ++i) {
         builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
     }
-    builder.CreateBr(exitBlock);
+    builder.CreateBr(exit_block);
 }
 
 template<>

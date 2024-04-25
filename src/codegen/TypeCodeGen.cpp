@@ -137,6 +137,9 @@ AbaciValue::Type TypeEvalGen::promote(AbaciValue::Type a, AbaciValue::Type b) co
     if (a == b) {
         return a;
     }
+    else if (a == AbaciValue::Unset || b == AbaciValue::Unset) {
+        return AbaciValue::Unset;
+    }
     else if (a < AbaciValue::String && b < AbaciValue::String) {
         return std::max(a, b);
     }
@@ -149,6 +152,9 @@ void TypeCodeGen::operator()(const abaci::ast::StmtList& stmts) const {
     if (!stmts.empty()) {
         environment->beginDefineScope();
         for (const auto& stmt : stmts) {
+            if (dynamic_cast<const ReturnStmt*>(stmt.get()) && &stmt != &stmts.back()) {
+                LogicError("Return statement must be at end of block.");
+            }
             (*this)(stmt);
         }
         environment->endDefineScope();
@@ -275,14 +281,19 @@ void TypeCodeGen::codeGen(const FunctionCall& function_call) const {
 
 template<>
 void TypeCodeGen::codeGen(const ReturnStmt& return_stmt) const {
+    if (!is_function) {
+        LogicError("Return statement can only appear inside a function.");
+    }
     TypeEvalGen expr(environment, cache);
     expr(return_stmt.expression);
     auto result = expr.get();
-    if (type_is_set && return_type != result) {
-        UnexpectedError("Function return type already set to different type.");
+    if (result != AbaciValue::Unset) {
+        if (type_is_set && return_type != result) {
+            UnexpectedError("Function return type already set to different type.");
+        }
+        return_type = result;
+        type_is_set = true;
     }
-    return_type = result;
-    type_is_set = true;
     return_stmt.depth = environment->getCurrentDefineScope()->getDepth();
 }
 

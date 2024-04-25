@@ -76,7 +76,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                     value = raw_value;
                     break;
                 case AbaciValue::Boolean:
-                    value = builder.CreateBitCast(raw_value, builder.getInt1Ty());
+                    value = builder.CreateICmpNE(raw_value, ConstantInt::get(builder.getInt64Ty(), 0));
                     break;
                 case AbaciValue::Float:
                     value = builder.CreateBitCast(raw_value, builder.getDoubleTy());

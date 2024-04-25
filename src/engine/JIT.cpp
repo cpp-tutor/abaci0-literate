@@ -57,7 +57,7 @@ void JIT::initialize() {
         FunctionType *inst_func_type = FunctionType::get(builder.getVoidTy(), {}, false);
         current_function = Function::Create(inst_func_type, Function::ExternalLinkage, function_name, *module);
         BasicBlock *entry_block = BasicBlock::Create(*context, "entry", current_function);
-        BasicBlock *exit_block = BasicBlock::Create(*context, "exit", current_function);
+        BasicBlock *exit_block = BasicBlock::Create(*context, "exit");
         builder.SetInsertPoint(entry_block);
         const auto& cache_function = cache->getFunction(instantiation.name);
         auto current_scope = environment->getCurrentDefineScope();
@@ -72,6 +72,7 @@ void JIT::initialize() {
         if (!dynamic_cast<const ReturnStmt*>(cache_function.body.back().get())) {
             builder.CreateBr(exit_block);
         }
+        exit_block->insertInto(current_function);
         builder.SetInsertPoint(exit_block);
         builder.CreateCall(module->getFunction("endScope"), { typed_environment_ptr });
         builder.CreateRetVoid();

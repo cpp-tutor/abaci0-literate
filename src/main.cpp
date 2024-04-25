@@ -12,7 +12,7 @@
 #include <string>
 using fmt::print;
 
-const std::string version = "0.8.6 (2024-Apr-22)";
+const std::string version = "0.8.9 (2024-Apr-25)";
 
 int main(const int argc, const char **argv) {
     if (argc == 2) {

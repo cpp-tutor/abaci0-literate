@@ -1,8 +1,6 @@
 # Abaci0: A JIT-compiled, statically-typed, and interactive scripting language
 
-*Programing language design has to be an art as well as a science. The ability to appeal to (human) coders is not something which always comes naturally to computer scientists, while the science element may be too technically complex for the amateur coder to venture into. Surely the skill lies in compromising the least to both accessibility, and implementation limitations?*
-
-*Abaci0 achieves this by having several, usually contradictory, features. It is statically typed, but variable assignments and function calls do not require type annotations. It is whitespace-neutral, without requiring semi-colons or other statement delimiters. It does not have a hand-written scanner/parser, or even a machine generated one, relying purely on the Boost Spirit X3 library to parse input rapidly. It is not another transpiler (to C or JavaScript), but produces native code dynamically via the LLVM backend.*
+*Programing language design has to be an art as well as a science. The ability to appeal to (human) coders is not something which always comes naturally to computer scientists, while the science element may be too technically complex for the amateur coder to venture into. Surely the skill lies in compromising the least to both accessibility, and implementation limitations? Abaci0 achieves this by having several, usually contradictory, features. It is statically typed, but variable assignments and function calls do not require type annotations. It is whitespace-neutral, without requiring semi-colons or other statement delimiters. It does not have a hand-written scanner/parser, or even a machine generated one, relying purely on the Boost Spirit X3 library to parse input rapidly. It is not another transpiler (to C or JavaScript), but produces native code dynamically via the LLVM backend.*
 
 The source code for this program is organized in a logical fashion, with six directories each containing a small number of C++ header and implementation files. In general, all of the code within each file is within a namespace named after the directory, for example `abaci::ast`&mdash;the major exceptions to this convention are the files `lib/Abaci.hpp` and `lib/Abaci.cpp`, where the functions declared are at global scope (and use C-linkage) for ease of referencing within the generated code.
 
@@ -70,11 +68,11 @@ struct Object {
 };
 ```
 
-Class `AbaciValue`'s `Type` enum lists all of the possible types (in approximate order of "complexity"), as well as a `Constant` bit used for `let =`, and a `TypeMask` to mask out this bit when constants are dereferenced. The `value` union is intended to be set to all zero bits when an `AbaciValue` is created; setting of the `type` field is always mandatory. The default constructor creates a `Nil` type, the other five are declared `explicit` to avoid unwanted type conversions; these constructors are only intended to be called from the parser to utilize constant values declared within the Abaci0 program. The `value.integer` field stores 64-bit integers in unsigned form even though signed math takes place during code generation; this allows input and correct parsing of large positive values (such as `0x8000000000000000`) which are then treated as two's-complement signed.
+Class `AbaciValue`'s `Type` enum lists all of the possible types (in approximate order of "complexity"), as well as a `Constant` bit used for `let =`, and a `TypeMask` to mask out this bit when constants are dereferenced. The type `Unset` is only used when attempting to determine a function's return type. The `value` union is intended to be set to all zero bits when an `AbaciValue` is created; setting of the `type` field is always mandatory. The default constructor creates a `Nil` type, the other five are declared `explicit` to avoid unwanted type conversions; these constructors are only intended to be called from the parser to utilize constant values declared within the Abaci0 program. The `value.integer` field stores 64-bit integers in unsigned form even though signed math takes place during code generation; this allows input and correct parsing of large positive values (such as `0x8000000000000000`) which are then treated as two's-complement signed.
 
 ```cpp
 struct AbaciValue {
-    enum Type { Nil, Boolean, Integer, Float, Complex, String, Object, TypeMask = 15, Constant = 16 };
+    enum Type { Nil, Boolean, Integer, Float, Complex, String, Object, TypeMask = 15, Constant = 16, Unset = 127 };
     union {
         void *nil{ nullptr };
         bool boolean;
@@ -90,12 +88,12 @@ struct AbaciValue {
     explicit AbaciValue(unsigned long long ull) : type{ Integer } { value.integer = ull; }
     explicit AbaciValue(double d) : type{ Float } { value.floating = d; }
     explicit AbaciValue(double real, double imag) : type{ Complex } { value.complex = new abaci::utility::Complex{ real, imag }; }
+    explicit AbaciValue(const std::string& s) : type{ String } { value.str = new abaci::utility::String(s); }
 ```
 
-The copy and copy-assignment constructors perform a deep copy on types that need it (`Complex` and `String`), calling private member function `clone()` to do this. The destructor is required in order to correctly release memory used by these types.
+The copy constructor and copy-assignment operator both perform a deep copy on types that need it (`Complex` and `String`), calling private member function `clone()` to do this. The destructor is required in order to correctly release memory used by these types.
 
 ```cpp
-    explicit AbaciValue(const std::string& s) : type{ String } { value.str = new abaci::utility::String(s); }
     AbaciValue(const AbaciValue& rhs) { clone(rhs); }
     AbaciValue& operator=(const AbaciValue& rhs) { clone(rhs); return *this; }
     ~AbaciValue();
@@ -1442,7 +1440,7 @@ bool test_statement(const std::string& stmt_str) {
 
 ### `Keywords.hpp`
 
-This header file specifies all of the Abaci0 keywords and symbolic tokens. In order to translate Abaci0 into a non-English language, or provide single (UTF-8) symbols for sequences such as ">=", modifing this file should be all that is required. [Note: Error messages and other diagnostics would still be in English as they are currently hard-coded into the source files, this may be addressed in the future.]
+This header file specifies all of the Abaci0 keywords and symbolic tokens. In order to translate Abaci0 into a non-English language, or provide single (UTF-8) symbols for sequences such as ">=", modifing this file should be all that is required. The macro `SYMBOLIC` allows for the second parameter to include any Unicode character specified as `\U...` or `\u...`, and `inline` allows multiple inlusion of this header file with symbols able to be resolved by the linker. [Note: Error messages and other diagnostics would still be in English as they are currently hard-coded into the source files, this may be addressed in the future.]
 
 ```cpp
 #define SYMBOLIC(TOKEN, VALUE) inline const char *TOKEN = reinterpret_cast<const char *>(u8##VALUE)
@@ -1563,12 +1561,12 @@ class StmtCodeGen {
     IRBuilder<>& builder;
     Module& module;
     Environment *environment;
-    BasicBlock *exitBlock;
+    BasicBlock *exit_block;
     int depth;
 public:
     StmtCodeGen() = delete;
-    StmtCodeGen(JIT& jit, BasicBlock *exitBlock = nullptr, int depth = -1) : jit{ jit }, builder{ jit.getBuilder() }, module{ jit.getModule() }, environment{ jit.getEnvironment() }, exitBlock{ exitBlock }, depth{ depth } {}
-    void operator()(const abaci::ast::StmtList&) const;
+    StmtCodeGen(JIT& jit, BasicBlock *exit_block = nullptr, int depth = -1) : jit{ jit }, builder{ jit.getBuilder() }, module{ jit.getModule() }, environment{ jit.getEnvironment() }, exit_block{ exit_block }, depth{ depth } {}
+    void operator()(const abaci::ast::StmtList&, BasicBlock *exit_block = nullptr) const;
     void operator()(const abaci::ast::StmtNode&) const;
 private:
     template<typename T>
@@ -1576,7 +1574,7 @@ private:
 };
 ```
 
-The final two classes are initialized from an `Environment` pointer and a `Cache` pointer (from `engine/Cache.hpp`). In order to return a type for a particular function, class `TypeEvalGen` maintains a stack, however being an analysis pass it is only concerned with the `AbaciValue::Type`. Functions `pop()` and `push()` manage this stack and `get()` again expects a size of exactly 1. Functions `operator()` and `promote()` are present, giving some further degree of similarity to class `ExprCodeGen`. Class `TypeCodeGen` has only two more data members (other than the constructor parameters), being a `type_is_set` flag and an `AbaciValue::Type` called `return_type`. These are only set by the specialization of `codeGen()` for an Abaci0 `return` statment, and are queried from client code with method `get()`.
+The final two classes are initialized from an `Environment` pointer and a `Cache` pointer (from `engine/Cache.hpp`). In order to return a type for a particular function, class `TypeEvalGen` maintains a stack, however being an analysis pass it is only concerned with the `AbaciValue::Type`. Functions `pop()` and `push()` manage this stack and `get()` again expects a size of exactly 1. Functions `operator()` and `promote()` are present, giving some further degree of similarity to class `ExprCodeGen`. Class `TypeCodeGen` has three more data members (other than the constructor parameters), these being a `is_function` flag to allow or disallow `return` statements, a `type_is_set` flag and an `AbaciValue::Type` called `return_type`. The first is set by the constructor while the last two are only set by the specialization of `codeGen()` for an Abaci0 `return` statment, and can be queried by client code with method `get()`.
 
 ```cpp
 class TypeEvalGen {
@@ -1596,9 +1594,7 @@ public:
     TypeEvalGen() = delete;
     TypeEvalGen(Environment *environment, Cache *cache) : environment{ environment }, cache{ cache } {}
     AbaciValue::Type get() const {
-        if (stack.size() != 1) {
-            UnexpectedError("Wrong stack size");
-        }
+        Assert(stack.size() == 1)
         return stack.front();
     }
     void operator()(const abaci::ast::ExprNode&) const;
@@ -1608,11 +1604,13 @@ public:
 class TypeCodeGen {
     Environment *environment;
     Cache *cache;
+    bool is_function;
     mutable bool type_is_set{ false };
     mutable AbaciValue::Type return_type;
 public:
     TypeCodeGen() = delete;
-    TypeCodeGen(Environment *environment, Cache *cache) : environment{ environment }, cache{ cache } {}
+    TypeCodeGen(Environment *environment, Cache *cache, bool is_function = false)
+        : environment{ environment }, cache{ cache }, is_function{ is_function } {}
     void operator()(const abaci::ast::StmtList&) const;
     void operator()(const abaci::ast::StmtNode&) const;
     auto get() const {
@@ -1717,7 +1715,7 @@ In the case of an `VariableNode` the name is stored in the generated code before
                     value = raw_value;
                     break;
                 case AbaciValue::Boolean:
-                    value = builder.CreateBitCast(raw_value, builder.getInt1Ty());
+                    value = builder.CreateICmpNE(raw_value, ConstantInt::get(builder.getInt64Ty(), 0));
                     break;
                 case AbaciValue::Float:
                     value = builder.CreateBitCast(raw_value, builder.getDoubleTy());
@@ -2397,10 +2395,10 @@ using namespace llvm;
 namespace abaci::codegen {
 ```
 
-The `operator()` for `StmtList` creates a new `DefineScope` and a call to create a new `Scope`, before iterating over the statements in the block and closing the scopes.
+The `operator()` for `StmtList` creates a new `DefineScope` and a call to create a new `Scope`, before iterating over the statements in the block and closing the scopes. If parameter `exit_block` is set a branch to it is made, and a condition avoiding dead code in the case of the block ending with `return` is used.
 
 ```cpp
-void StmtCodeGen::operator()(const StmtList& stmts) const {
+void StmtCodeGen::operator()(const StmtList& stmts, BasicBlock *exit_block) const {
     if (!stmts.empty()) {
         Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
         Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
@@ -2409,8 +2407,18 @@ void StmtCodeGen::operator()(const StmtList& stmts) const {
         for (const auto& stmt : stmts) {
             (*this)(stmt);
         }
-        builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
+        if (!dynamic_cast<const ReturnStmt*>(stmts.back().get())) {
+            builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
+            if (exit_block) {
+                builder.CreateBr(exit_block);
+            }
+        }
         environment->endDefineScope();
+    }
+    else {
+        if (exit_block) {
+            builder.CreateBr(exit_block);
+        }
     }
 }
 ```
@@ -2520,7 +2528,7 @@ void StmtCodeGen::codeGen(const AssignStmt& assign) const {
 }
 ```
 
-An `IfStmt` requires evaluation of the condition, and conversion of this to a Boolean value (if not already). Three "Basic Blocks" are needed to fulfil the logic of `if`/`else`/`endif`, and LLVM blocks are not allowed to "fall through" necessitating the use of a conditional branch and two unconditional branches.
+An `IfStmt` requires evaluation of the condition, and conversion of this to a Boolean value (if not already). Three "Basic Blocks" are needed to fulfil the logic of `if`/`else`/`endif`, and LLVM blocks are not allowed to "fall through" necessitating the use of a conditional branch and two unconditional branches. The call to `operator()(StmtList&, BasicBlock*)` sets the second parameter to `merge_block`, this allows for `return` statments inside `if` and `else` blocks without generating dead code.
 
 ```cpp
 template<>
@@ -2540,11 +2548,9 @@ void StmtCodeGen::codeGen(const IfStmt& if_stmt) const {
     BasicBlock *merge_block = BasicBlock::Create(jit.getContext(), "", jit.getFunction());
     builder.CreateCondBr(condition, true_block, false_block);
     builder.SetInsertPoint(true_block);
-    (*this)(if_stmt.true_test);
-    builder.CreateBr(merge_block);
+    (*this)(if_stmt.true_test, merge_block);
     builder.SetInsertPoint(false_block);
-    (*this)(if_stmt.false_test);
-    builder.CreateBr(merge_block);
+    (*this)(if_stmt.false_test, merge_block);
     builder.SetInsertPoint(merge_block);
 }
 ```
@@ -2618,7 +2624,7 @@ void StmtCodeGen::codeGen(const RepeatStmt& repeat_stmt) const {
 }
 ```
 
-The specialization for `CaseStmt` is the most involved, creating a `std::vector<BasicBlock*>` and referring to them by index (the total number needed being `when` clauses times 2 plus `else` clause if present plus 1). The `when` clauses are evaluated in the same order written in the Abaci0 program, any match causes a jump to the last Basic Block.
+The specialization for `CaseStmt` is the most involved, creating a `std::vector<BasicBlock*>` and referring to them by index (the total number needed being `when` clauses times 2 plus `else` clause if present plus 1). The `when` clauses are evaluated in the same order written in the Abaci0 program, any match causes a jump to the last Basic Block. As with `IfStmt`, a `return` statement can be used within a `when` or `else` block.
 
 ```cpp
 template<>
@@ -2666,14 +2672,12 @@ void StmtCodeGen::codeGen(const CaseStmt& case_stmt) const {
         }
         builder.CreateCondBr(is_match, case_blocks.at(block_number * 2 + 1), case_blocks.at(block_number * 2 + 2));
         builder.SetInsertPoint(case_blocks.at(block_number * 2 + 1));
-        (*this)(when.block);
-        builder.CreateBr(case_blocks.back());
+        (*this)(when.block, case_blocks.back());
         ++block_number;
     }
     if (!case_stmt.unmatched.empty()) {
         builder.SetInsertPoint(case_blocks.at(case_blocks.size() - 2));
-        (*this)(case_stmt.unmatched);
-        builder.CreateBr(case_blocks.back());
+        (*this)(case_stmt.unmatched, case_blocks.back());
     }
     builder.SetInsertPoint(case_blocks.back());
 }
@@ -2755,7 +2759,7 @@ void StmtCodeGen::codeGen(const ReturnStmt& return_stmt) const {
     for (int i = depth; i < (return_stmt.depth - 1); ++i) {
         builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
     }
-    builder.CreateBr(exitBlock);
+    builder.CreateBr(exit_block);
 }
 ```
 
@@ -2951,12 +2955,15 @@ Implicit promotions based upon `Operator` types are handled for `ListNode`.
 }
 ```
 
-A simplified `promote()` produces the same results as for `ExprCodeGen::promote()`.
+A simplified `promote()` produces the same results as for `ExprCodeGen::promote()`, with the addition of type `Unset` for either parameter being returned as the binary operator type.
 
 ```cpp
 AbaciValue::Type TypeEvalGen::promote(AbaciValue::Type a, AbaciValue::Type b) const {
     if (a == b) {
         return a;
+    }
+    else if (a == AbaciValue::Unset || b == AbaciValue::Unset) {
+        return AbaciValue::Unset;
     }
     else if (a < AbaciValue::String && b < AbaciValue::String) {
         return std::max(a, b);
@@ -2967,13 +2974,16 @@ AbaciValue::Type TypeEvalGen::promote(AbaciValue::Type a, AbaciValue::Type b) co
 }
 ```
 
-The second part of this implementation file is for class `TypeCodeGen`, starting with `operator()` for `StmtList` which creates a new `DefineScope`.
+The second part of this implementation file is for class `TypeCodeGen`, starting with `operator()` for `StmtList` which creates a new `DefineScope`. A check for any `return` statement as being the last statement of a block is made.
 
 ```cpp
 void TypeCodeGen::operator()(const abaci::ast::StmtList& stmts) const {
     if (!stmts.empty()) {
         environment->beginDefineScope();
         for (const auto& stmt : stmts) {
+            if (dynamic_cast<const ReturnStmt*>(stmt.get()) && &stmt != &stmts.back()) {
+                LogicError("Return statement must be at end of block.");
+            }
             (*this)(stmt);
         }
         environment->endDefineScope();
@@ -3111,19 +3121,24 @@ void TypeCodeGen::codeGen(const FunctionCall& function_call) const {
 }
 ```
 
-The specialization for `ReturnStmt` causes the return expression to be evaluated for its type, setting the members `return_type` and `type_is_set`. The `depth` member in the AST is also set here (different instantiations of the same function would always have the same depth due to the scoping rules for functions).
+ The specialization for `ReturnStmt` causes the return expression to be evaluated for its type, setting the members `return_type` and `type_is_set` if a non-`Unset` type is found. (A recursive function call would return `Unset` at this point.) A check for whether a function is being instantiated is made, and the `depth` member in the AST is also set here (different instantiations of the same function would always have the same depth due to the scoping rules for functions).
 
 ```cpp
 template<>
 void TypeCodeGen::codeGen(const ReturnStmt& return_stmt) const {
+    if (!is_function) {
+        LogicError("Return statement can only appear inside a function.");
+    }
     TypeEvalGen expr(environment, cache);
     expr(return_stmt.expression);
     auto result = expr.get();
-    if (type_is_set && return_type != result) {
-        UnexpectedError("Function return type already set to different type.");
+    if (result != AbaciValue::Unset) {
+        if (type_is_set && return_type != result) {
+            UnexpectedError("Function return type already set to different type.");
+        }
+        return_type = result;
+        type_is_set = true;
     }
-    return_type = result;
-    type_is_set = true;
     return_stmt.depth = environment->getCurrentDefineScope()->getDepth();
 }
 ```
@@ -3292,7 +3307,7 @@ void Cache::addFunctionTemplate(const std::string& name, const std::vector<Varia
 }
 ```
 
-Function `addFunctionInstantiation()` is called with a function name, actual parameter types and and `Environment*`, creating a new instantiation record if the mangled name does not match any already present. This record obtains a return type value by calling `TypeCodeGen::operator()`.
+Function `addFunctionInstantiation()` is called with a function name, actual parameter types and and `Environment*`, creating a temporary `Unset` instantiation record if the mangled name does not match any already present. A return type value is obtained by calling `TypeCodeGen::operator(StmtList&)`, and the instantiation record is then updated.
 
 ```cpp
 void Cache::addFunctionInstantiation(const std::string& name, const std::vector<AbaciValue::Type>& types, Environment *environment) {
@@ -3308,9 +3323,15 @@ void Cache::addFunctionInstantiation(const std::string& name, const std::vector<
                 }
             }
             if (create_instantiation) {
-                TypeCodeGen gen_return_type(environment, this);
-                for (const auto& function_stmt : iter->second.body) {
-                    gen_return_type(function_stmt);
+                instantiations.push_back({ name, types, AbaciValue::Unset, nullptr });
+                TypeCodeGen gen_return_type(environment, this, true);
+                gen_return_type(iter->second.body);
+                auto iter = std::find_if(instantiations.begin(), instantiations.end(),
+                        [&](const auto& elem){
+                            return mangled(elem.name, elem.parameter_types) == mangled(name, types);
+                        });
+                if (iter != instantiations.end()) {
+                    instantiations.erase(iter);
                 }
                 instantiations.push_back({ name, types, gen_return_type.get(), environment->getCurrentDefineScope() });
             }
@@ -3448,7 +3469,7 @@ The call to `JIT::getExecFunction` calls finalization of the main function, as w
 
 ### `JIT.cpp`
 
-Function `initialize()` contains boilerplate code related to setting values for library function types and linkage as well as the types used to allocate `AbaciValue` instances during code generation. A loop over all the function instantiations stored in the cache involves calls to class `StmtCodeGen` (with `exit_block` and `DefineScope` depth set correctly). If the function does not end with `return` then a branch into `exit_block` is needed. The function ends by starting the statement (REPL) or block (file) execution function, setting an insert point for further code generated.
+Function `initialize()` contains boilerplate code related to setting values for library function types and linkage as well as the types used to allocate `AbaciValue` instances during code generation. A loop over all the function instantiations stored in the cache involves calls to class `StmtCodeGen` (with `exit_block` and `DefineScope` depth set correctly). If the function does not end with `return` then a branch into an uninitialized `exit_block` is needed, this block is inserted into the end of the function. The function ends by starting the statement (REPL) or block (file) execution function, setting an insert point for further code generated.
 
 ```cpp
 using namespace llvm;
@@ -3496,7 +3517,7 @@ void JIT::initialize() {
         FunctionType *inst_func_type = FunctionType::get(builder.getVoidTy(), {}, false);
         current_function = Function::Create(inst_func_type, Function::ExternalLinkage, function_name, *module);
         BasicBlock *entry_block = BasicBlock::Create(*context, "entry", current_function);
-        BasicBlock *exit_block = BasicBlock::Create(*context, "exit", current_function);
+        BasicBlock *exit_block = BasicBlock::Create(*context, "exit");
         builder.SetInsertPoint(entry_block);
         const auto& cache_function = cache->getFunction(instantiation.name);
         auto current_scope = environment->getCurrentDefineScope();
@@ -3511,6 +3532,7 @@ void JIT::initialize() {
         if (!dynamic_cast<const ReturnStmt*>(cache_function.body.back().get())) {
             builder.CreateBr(exit_block);
         }
+        exit_block->insertInto(current_function);
         builder.SetInsertPoint(exit_block);
         builder.CreateCall(module->getFunction("endScope"), { typed_environment_ptr });
         builder.CreateRetVoid();
@@ -3579,7 +3601,7 @@ The main program contained in this file is not intended to be fully-featured, bu
 In the case of a single program argument (`./abaci0 script.abaci`), this file is read in one go before `ast`, `environment` and `functions` are created (as empty). The call to `parse_block()` returns `true` if successful, causing use of class `TypeCodeGen` over the whole program. If no errors are caused by this stage, `jit` and `code_gen` are created and the resulting `programFunc` is called before the main program exits. Syntax errors cause the message `"Could not parse file."`, while other errors would result in exceptions being thrown; if errors are caught, the main program exits with a non-zero failure code.
 
 ```cpp
-const std::string version = "0.8.6 (2024-Apr-22)";
+const std::string version = "0.8.9 (2024-Apr-25)";
 
 int main(const int argc, const char **argv) {
     if (argc == 2) {

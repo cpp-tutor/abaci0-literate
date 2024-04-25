@@ -1,6 +1,7 @@
 #include "Cache.hpp"
 #include "codegen/CodeGen.hpp"
 #include "utility/Report.hpp"
+#include <algorithm>
 
 namespace abaci::engine {
 
@@ -39,9 +40,15 @@ void Cache::addFunctionInstantiation(const std::string& name, const std::vector<
                 }
             }
             if (create_instantiation) {
-                TypeCodeGen gen_return_type(environment, this);
-                for (const auto& function_stmt : iter->second.body) {
-                    gen_return_type(function_stmt);
+                instantiations.push_back({ name, types, AbaciValue::Unset, nullptr });
+                TypeCodeGen gen_return_type(environment, this, true);
+                gen_return_type(iter->second.body);
+                auto iter = std::find_if(instantiations.begin(), instantiations.end(),
+                        [&](const auto& elem){
+                            return mangled(elem.name, elem.parameter_types) == mangled(name, types);
+                        });
+                if (iter != instantiations.end()) {
+                    instantiations.erase(iter);
                 }
                 instantiations.push_back({ name, types, gen_return_type.get(), environment->getCurrentDefineScope() });
             }

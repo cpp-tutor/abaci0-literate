@@ -48,7 +48,7 @@ struct Object {
 };
 
 struct AbaciValue {
-    enum Type { Nil, Boolean, Integer, Float, Complex, String, Object, TypeMask = 15, Constant = 16 };
+    enum Type { Nil, Boolean, Integer, Float, Complex, String, Object, TypeMask = 15, Constant = 16, Unset = 127 };
     union {
         void *nil{ nullptr };
         bool boolean;
