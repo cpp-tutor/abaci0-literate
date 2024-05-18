@@ -1,6 +1,6 @@
 # Abaci0: A JIT-compiled, statically-typed, and interactive scripting language
 
-*Programing language design has to be an art as well as a science. The ability to appeal to (human) coders is not something which always comes naturally to computer scientists, while the science element may be too technically complex for the amateur coder to venture into. Surely the skill lies in compromising the least to both accessibility, and implementation limitations? Abaci0 achieves this by having several, usually contradictory, features. It is statically typed, but variable assignments and function calls do not require type annotations. It is whitespace-neutral, without requiring semi-colons or other statement delimiters. It does not have a hand-written scanner/parser, or even a machine generated one, relying purely on the Boost Spirit X3 library to parse input rapidly. It is not another transpiler (to C or JavaScript), but produces native code dynamically via the LLVM backend.*
+*Programming language design has to be an art as well as a science. The ability to appeal to (human) coders is not something which always comes naturally to computer scientists, while the science element may be too technically complex for the amateur coder to venture into. Surely the skill lies in compromising the least to both accessibility, and implementation limitations? Abaci0 achieves this by having several, usually contradictory, features. It is statically typed, but variable assignments and function calls do not require type annotations. It is whitespace-neutral, without requiring semi-colons or other statement delimiters. It does not have a hand-written scanner/parser, or even a machine generated one, relying purely on the Boost Spirit X3 library to parse input rapidly. It is not another transpiler (to C or JavaScript), but produces native code dynamically via the LLVM backend.*
 
 The source code for this program is organized in a logical fashion, with six directories each containing a small number of C++ header and implementation files. In general, all of the code within each file is within a namespace named after the directory, for example `abaci::ast`&mdash;the major exceptions to this convention are the files `lib/Abaci.hpp` and `lib/Abaci.cpp`, where the functions declared are at global scope (and use C-linkage) for ease of referencing within the generated code.
 
@@ -20,7 +20,7 @@ Notes added to the descriptions take the form [Note: ...] and may be of a differ
 
 ### `Utility.hpp`
 
-The class `AbaciValue` is the foundation of the static type system for Abaci0, providing support for seven different types. [Note: Support for `Object` is not yet implemented.] The basis for the class is a "tagged union" where the size of the `value` union is guaranteed to be 64 bits wide. The `type` field is based upon a (plain) enum, and is always initialized when an `AbaciValue` is first created. [Note: The need for this type field is possibly questionable as Abaci0 is a statically-typed language and type information for each symbol is held in the various `DefineScope`s constructed at compile-time. A future improvement could be to omit this field, however it is not clear whether this is technically possible.]
+The class `AbaciValue` is the foundation of the static type system for Abaci0, providing support for seven different types. The basis for the class is a "tagged union" where the size of the `value` union is guaranteed to be 64 bits wide. The `type` field is based upon a (plain) enum, and is always initialized when an `AbaciValue` is first created. [Note: The need for this type field is possibly questionable as Abaci0 is a statically-typed language and type information for each symbol is held in the various `DefineScope`s constructed at compile-time. A future improvement could be to omit this field, however it is not clear whether this is technically possible.]
 
 ```cpp
 
@@ -29,7 +29,7 @@ namespace abaci::utility {
 struct AbaciValue;
 ```
 
-The `Complex` and `String` types are intended to be able to be created using LLVM API calls and so are plain structs, with two constructors defined for `String`&mdash;one for the parser to create string constants and one for use by the `clone()` function. Class `Variable` is a wrapper around a `std::string` and exists to hold a variable name. [Note: `Object` contains named member variables and functions as C++ library types and would need to be initialized by a client function in `lib/Abaci.cpp`.]
+The `Complex`, `String` and `Object` types are intended to be able to be created using LLVM API calls and so are plain structs. Two constructors are provided for `String`&mdash;one for the parser to create string constants and one for use by the `clone()` function. The composite `Object` class has its constructor and destructor in `lib/Abaci.cpp` due to the fact it references an incomplete `AbaciType`. Class `Variable` is a wrapper around a `std::string` and exists to hold a variable name.
 
 ```cpp
 struct Complex {
@@ -52,6 +52,14 @@ struct String {
     ~String() { delete[] ptr; ptr = nullptr; len = 0; }
 };
 
+struct Object {
+    char8_t *class_name;
+    std::size_t variables_sz;
+    AbaciValue *variables;
+    Object(const char8_t *s, std::size_t sz, AbaciValue *data);
+    ~Object();
+};
+
 class Variable {
     std::string name;
 public:
@@ -60,15 +68,11 @@ public:
     Variable& operator=(const Variable&) = default;
     Variable(const std::string& name) : name{ name } {}
     const auto& get() const { return name; }
-};
-
-struct Object {
-    std::vector<std::pair<Variable,AbaciValue>> variables;
-    std::vector<std::string> methods;
+    bool operator==(const Variable& rhs) const { return name == rhs.name; }
 };
 ```
 
-Class `AbaciValue`'s `Type` enum lists all of the possible types (in approximate order of "complexity"), as well as a `Constant` bit used for `let =`, and a `TypeMask` to mask out this bit when constants are dereferenced. The type `Unset` is only used when attempting to determine a function's return type. The `value` union is intended to be set to all zero bits when an `AbaciValue` is created; setting of the `type` field is always mandatory. The default constructor creates a `Nil` type, the other five are declared `explicit` to avoid unwanted type conversions; these constructors are only intended to be called from the parser to utilize constant values declared within the Abaci0 program. The `value.integer` field stores 64-bit integers in unsigned form even though signed math takes place during code generation; this allows input and correct parsing of large positive values (such as `0x8000000000000000`) which are then treated as two's-complement signed.
+Class `AbaciValue`'s `Type` enum lists all of the possible types (in approximate order of "complexity"), as well as a `Constant` bit used for `let =`, and a `TypeMask` to mask out this bit when constants are dereferenced. The type `Unset` is only used when attempting to determine a function's return type. The `value` union is intended to be set to all zero bits when an `AbaciValue` is created; setting of the `type` field is always mandatory. The default constructor creates a `Nil` type, the other six are declared `explicit` to avoid unwanted type conversions; these constructors are only intended to be called from the parser to utilize constant values declared within the Abaci0 program. The `value.integer` field stores 64-bit integers in unsigned form even though signed Math takes place during code generation; this allows input and correct parsing of large positive values (such as `0x8000000000000000`) which are then treated as two's-complement signed.
 
 ```cpp
 struct AbaciValue {
@@ -89,13 +93,14 @@ struct AbaciValue {
     explicit AbaciValue(double d) : type{ Float } { value.floating = d; }
     explicit AbaciValue(double real, double imag) : type{ Complex } { value.complex = new abaci::utility::Complex{ real, imag }; }
     explicit AbaciValue(const std::string& s) : type{ String } { value.str = new abaci::utility::String(s); }
+    explicit AbaciValue(const char8_t *s, std::size_t sz, AbaciValue *data) : type{ Object } { value.object = new abaci::utility::Object(s, sz, data); }
 ```
 
-The copy constructor and copy-assignment operator both perform a deep copy on types that need it (`Complex` and `String`), calling private member function `clone()` to do this. The destructor is required in order to correctly release memory used by these types.
+The copy constructor and copy-assignment operator both perform a deep copy on types that need it (`Complex`, `String` and `Object`), calling private member function `clone()` to do this. The destructor is required in order to correctly release memory used by these types, and is explicitly invoked for the copy-assignment operator.
 
 ```cpp
     AbaciValue(const AbaciValue& rhs) { clone(rhs); }
-    AbaciValue& operator=(const AbaciValue& rhs) { clone(rhs); return *this; }
+    AbaciValue& operator=(const AbaciValue& rhs) { this->~AbaciValue(); clone(rhs); return *this; }
     ~AbaciValue();
 private:
     void clone(const AbaciValue&);
@@ -104,7 +109,7 @@ private:
 static_assert(sizeof(AbaciValue::value) == 8, "AbaciValue::value must be exactly 64 bits");
 ```
 
-The scoped enum `Operator` lists all of the operators used by Abaci0. A mapping of the string values to these tokens is held in the map `Operators`, with the string values as the keys. The function `mangled()` takes a function name and its input parameter types and returns a unique mangled name, used for Abaci0 function instantiation as unique LLVM functions. Stream output for `AbaciValue` and `Operator`, and generic conversion of any type to a string representation according to its stream output form, are supported.
+The scoped enum `Operator` lists all of the operators used by Abaci0. A mapping of the string values to these tokens is held in the map `Operators`, with the string values as the keys. Stream output for `AbaciValue` and `Operator`, and generic conversion of any type to a string representation according to its stream output form, are supported.
 
 ```cpp
 enum class Operator { None, Plus, Minus, Times, Divide, Modulo, FloorDivide, Exponent,
@@ -113,8 +118,6 @@ enum class Operator { None, Plus, Minus, Times, Divide, Modulo, FloorDivide, Exp
     Comma, SemiColon, From, To };
 
 extern const std::unordered_map<std::string,Operator> Operators;
-
-std::string mangled(const std::string& name, const std::vector<AbaciValue::Type>& types);
 
 } // namespace abaci::utility
 
@@ -165,7 +168,7 @@ const std::unordered_map<std::string,Operator> Operators{
 };
 ```
 
-Function `AbaciValue::clone()` needs to mask out the `Constant` bit before performing a deep copy, ensuring to not copy null `Complex` or `String` types other than as `nullptr`.
+Function `AbaciValue::clone()` needs to mask out the `Constant` bit before performing a deep copy, ensuring to not copy null `Complex`, `String` or `Object` types other than as `nullptr`. Class `Object`'s constructor also makes a deep copy, which may possibly include recursive copying.
 
 ```cpp
 void AbaciValue::clone(const AbaciValue& rhs) {
@@ -188,15 +191,25 @@ void AbaciValue::clone(const AbaciValue& rhs) {
             value.str = rhs.value.str ? new abaci::utility::String(rhs.value.str->ptr, rhs.value.str->len) : nullptr;
             break;
         case Object:
-            value.object = rhs.value.object ? new abaci::utility::Object{ rhs.value.object->variables, rhs.value.object->methods } : nullptr;
+            value.object = rhs.value.object ? new abaci::utility::Object(rhs.value.object->class_name, rhs.value.object->variables_sz, rhs.value.object->variables) : nullptr;
             break;
         default:
             break;
     }
     type = rhs.type;
 }
+
+Object::Object(const char8_t *s, std::size_t sz, AbaciValue *data) {
+    class_name = new char8_t[strlen(reinterpret_cast<const char*>(s)) + 1];
+    strcpy(reinterpret_cast<char*>(class_name), reinterpret_cast<const char*>(s));
+    variables_sz = sz;
+    variables = new AbaciValue[variables_sz];
+    for (std::size_t i = 0; i != variables_sz; ++i) {
+        variables[i] = AbaciValue(data[i]);
+    }
+}
 ```
-Similarly the destructor needs only perform cleanup on types which allocate heap memory.
+Similarly the destructor for `AbaciValue` needs only perform cleanup on types which allocate heap memory. The destructor for `Object` also performs cleanup on all of its heap memory usage.
 
 ```cpp
 AbaciValue::~AbaciValue() {
@@ -217,42 +230,15 @@ AbaciValue::~AbaciValue() {
             break;
     }
 }
-```
 
-Global function `mangled()` creates a unique function name based upon the types of its parameters. A call to `f(a,b)` where `a` is an `AbaciValue::Integer` and `b` is an `AbaciValue::Floating` would be given the name `f.2.3`. Mangling for top-bit-set character strings, intended for use with UTF-8 identifiers, is also supported; this function is used to allow per-type function instantiation by `engine/Cache.cpp` and `engine/JIT.cpp`.
-
-```cpp
-std::string mangled(const std::string& name, const std::vector<AbaciValue::Type>& types) {
-    std::string function_name;
-    for (unsigned char ch : name) {
-        if (ch == '\'') {
-            function_name.push_back('.');
-        }
-        else if (ch >= 0x80) {
-            function_name.push_back('.');
-            char buffer[16];
-            auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer), static_cast<int>(ch), 16);
-            if (ec != std::errc()) {
-                UnexpectedError("Bad numeric conversion.");
-            }
-            *ptr = '\0';
-            function_name.append(buffer);
-        }
-        else {
-            function_name.push_back(ch);
-        }
+Object::~Object() {
+    for (std::size_t i = 0; i != variables_sz; ++i) {
+        variables[i].~AbaciValue();
     }
-    for (const auto parameter_type : types) {
-        function_name.push_back('.');
-        char buffer[16];
-        auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer), static_cast<int>(parameter_type), 10);
-        if (ec != std::errc()) {
-            UnexpectedError("Bad numeric conversion.");
-        }
-        *ptr = '\0';
-        function_name.append(buffer);
-    }
-    return function_name;
+    delete[] variables;
+    variables_sz = 0;
+    delete[] class_name;
+    class_name = nullptr;
 }
 
 } // namespace abaci::utility
@@ -307,12 +293,19 @@ namespace abaci::utility {
 class Environment {
 public:
     class DefineScope {
-        std::unordered_map<std::string,AbaciValue::Type> types;
+    public:
+        struct Object {
+            std::string class_name;
+            std::vector<std::variant<AbaciValue::Type,Object>> object_types;
+        };
+        using Type = std::variant<AbaciValue::Type,Object>;
+    private:
+        std::unordered_map<std::string,Type> types;
         std::shared_ptr<DefineScope> enclosing;
     public:
         DefineScope(std::shared_ptr<DefineScope> enclosing = nullptr) : enclosing{ enclosing } {}
-        void setType(const std::string& name, const AbaciValue::Type type);
-        AbaciValue::Type getType(const std::string& name) const;
+        void setType(const std::string& name, const Type type);
+        Type getType(const std::string& name) const;
         bool isDefined(const std::string& name) const;
         std::shared_ptr<DefineScope> getEnclosing() { return enclosing; }
         int getDepth() const;
@@ -346,21 +339,51 @@ public:
         current_scope = std::make_unique<Scope>(current_scope);
     }
     void endScope() {
-        current_scope = current_scope->getEnclosing();
-    }
+```
+
+The purpose of `Environment::setCurrentDefineScope()` is to allow function instantiations to only access global and parameter variables, thus the `DefineScope` is a subset of the `Scope` and local functions are therefore disallowed. The `DefineScope` needs to be reset (using a call to the same function) once the function instantiation is complete.
+
+A getter for the current `Scope` is provided for client code in `lib/Abaci.cpp` to lookup/set values in the current scope. The function `Environment::reset()` deletes all scopes except for global in case of an exception being thrown in an interactive session.
+
+Three access functions for handling nested "this pointers" are provided, and are used by client code again in `lib/Abaci.cpp`.
+
+```cpp
     std::shared_ptr<DefineScope> getCurrentDefineScope() { return current_define_scope; }
     std::shared_ptr<DefineScope> getGlobalDefineScope() { return global_define_scope; }
     void setCurrentDefineScope(std::shared_ptr<DefineScope> scope) { current_define_scope = scope; }
     std::shared_ptr<Scope> getCurrentScope() { return current_scope; }
+    void reset() {
+        while (current_scope->getEnclosing()) {
+            endScope();
+        }
+        while (current_define_scope->getEnclosing()) {
+            endDefineScope();
+        }
+        this_ptrs.clear();
+    }
+    void setThisPtr(AbaciValue *ptr) { this_ptrs.push_back(ptr); }
+    void unsetThisPtr() { this_ptrs.pop_back(); }
+    AbaciValue *getThisPtr() { return this_ptrs.empty() ? nullptr : this_ptrs.back(); }
 private:
     std::shared_ptr<Scope> current_scope;
     std::shared_ptr<DefineScope> current_define_scope, global_define_scope;
+    std::vector<AbaciValue*> this_ptrs;
 };
-
-} // namespace abaci::utility
 ```
 
-The purpose of `Environment::setCurrentDefineScope()` is to allow function instantiations to only access global and parameter variables, thus the `DefineScope` is a subset of the `Scope` and local functions are therefore disallowed. The `DefineScope` needs to be reset (using a call to the same function) once the function instantiation is complete.
+The function `mangled()` takes a function name and its input parameter types and returns a unique mangled name, used for Abaci0 function instantiation as unique LLVM functions, while `environmentTypeToType()` converts a (possibly composite) `DefineScope` type to a simple integer value. The equality-comparison operator for `DefineScope::Type` is also declared here.
+
+```cpp
+std::string mangled(const std::string& name, const std::vector<Environment::DefineScope::Type>& types);
+
+AbaciValue::Type environmentTypeToType(const Environment::DefineScope::Type& env_type);
+
+bool operator==(const Environment::DefineScope::Type& lhs, const Environment::DefineScope::Type& rhs);
+
+} // namespace abaci::utility
+
+#endif
+```
 
 ### `Environment.cpp`
 
@@ -369,7 +392,7 @@ Method `setType()` only allows creation of new variables in the current `DefineS
 ```cpp
 namespace abaci::utility {
 
-void Environment::DefineScope::setType(const std::string& name, const AbaciValue::Type type) {
+void Environment::DefineScope::setType(const std::string& name, const Environment::DefineScope::Type type) {
     auto iter = types.find(name);
     if (iter == types.end()) {
         types.insert({ name, type });
@@ -383,7 +406,7 @@ void Environment::DefineScope::setType(const std::string& name, const AbaciValue
 Method `getType()` searches recursively down the `DefineScope` hierarchy for a variable with the required name, stopping and reporting an error only at global scope.
 
 ```cpp
-AbaciValue::Type Environment::DefineScope::getType(const std::string& name) const {
+Environment::DefineScope::Type Environment::DefineScope::getType(const std::string& name) const {
     auto iter = types.find(name);
     if (iter != types.end()) {
         return iter->second;
@@ -478,6 +501,99 @@ AbaciValue *Environment::Scope::getValue(const std::string& name) {
        UnexpectedError("No such variable " + name + ".");
     }
 }
+```
+
+Global function `mangled()` creates a unique function name based upon the types of its parameters. A call to `f(a,b)` where `a` is an `AbaciValue::Integer` and `b` is an `AbaciValue::Floating` would be given the name `f_2_3`. Mangling for top-bit-set character strings, intended for use with UTF-8 identifiers, is also supported by translation to hexadecimal; this function is used to allow per-type function instantiation by `engine/Cache.cpp` and `engine/JIT.cpp`.
+
+```cpp
+std::string mangled(const std::string& name, const std::vector<Environment::DefineScope::Type>& types) {
+    std::string function_name;
+    for (unsigned char ch : name) {
+        if (ch == '\'') {
+            function_name.push_back('_');
+        }
+        else if (ch >= 0x80) {
+            function_name.push_back('.');
+            char buffer[16];
+            auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer), static_cast<int>(ch), 16);
+            if (ec != std::errc()) {
+                UnexpectedError("Bad numeric conversion.");
+            }
+            *ptr = '\0';
+            function_name.append(buffer);
+        }
+        else {
+            function_name.push_back(ch);
+        }
+    }
+    for (const auto& parameter_type : types) {
+        function_name.push_back('.');
+        if (std::holds_alternative<AbaciValue::Type>(parameter_type)) {
+            char buffer[16];
+            auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer),
+                static_cast<int>(std::get<AbaciValue::Type>(parameter_type) & AbaciValue::TypeMask), 10);
+            if (ec != std::errc()) {
+                UnexpectedError("Bad numeric conversion.");
+            }
+            *ptr = '\0';
+            function_name.append(buffer);
+        }
+        else if (std::holds_alternative<Environment::DefineScope::Object>(parameter_type)) {
+            function_name.append(mangled(std::get<Environment::DefineScope::Object>(parameter_type).class_name, {}));
+            function_name.push_back('_');
+            function_name.append(mangled("", std::get<Environment::DefineScope::Object>(parameter_type).object_types));
+            function_name.push_back('_');
+        }
+    }
+    return function_name;
+}
+```
+
+Function `environmentTypeToType()` is defined in full, returning an integer value based on its parameter, while `operator==` for `Environment::DefineScope::Type` only returns true if all type(s) and nested type(s), plus class names (if any) match exactly.
+
+```cpp
+AbaciValue::Type environmentTypeToType(const Environment::DefineScope::Type& env_type) {
+    if (std::holds_alternative<AbaciValue::Type>(env_type)) {
+        return static_cast<AbaciValue::Type>(std::get<AbaciValue::Type>(env_type) & AbaciValue::TypeMask);
+    }
+    else if (std::holds_alternative<Environment::DefineScope::Object>(env_type)) {
+        return AbaciValue::Object;
+    }
+    else {
+        UnexpectedError("Bad type.")
+    }
+}
+
+bool operator==(const Environment::DefineScope::Type& lhs, const Environment::DefineScope::Type& rhs) {
+    if (lhs.index() != rhs.index()) {
+        return false;
+    }
+    else if (std::holds_alternative<AbaciValue::Type>(lhs)) {
+        return (std::get<AbaciValue::Type>(lhs) & AbaciValue::TypeMask) == (std::get<AbaciValue::Type>(rhs) & AbaciValue::TypeMask);
+    }
+    else if (std::holds_alternative<Environment::DefineScope::Object>(lhs)) {
+        if (std::get<Environment::DefineScope::Object>(lhs).class_name
+            != std::get<Environment::DefineScope::Object>(rhs).class_name) {
+            return false;
+        }
+        else if (std::get<Environment::DefineScope::Object>(lhs).object_types.size()
+            != std::get<Environment::DefineScope::Object>(rhs).object_types.size()) {
+            return false;
+        }
+        else {
+            for (auto lhs_iter = std::get<Environment::DefineScope::Object>(lhs).object_types.cbegin(),
+                rhs_iter = std::get<Environment::DefineScope::Object>(rhs).object_types.cbegin();
+                lhs_iter != std::get<Environment::DefineScope::Object>(lhs).object_types.end();
+                ++lhs_iter, ++rhs_iter) {
+                if (!(*lhs_iter == *rhs_iter)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+    UnexpectedError("Bad type.");
+}
 
 } // namespace abaci::utility
 ```
@@ -543,7 +659,7 @@ Convenience macros `LogicError()`, `UnexpectedError()` and `Assert()` allow for 
 
 ### `Abaci.hpp`
 
-The functionality of the compiler which needs to be made available to the JIT-compiled code at execution time are listed in this header file. The functions are C++ functions declared with C-linkage, ensuring that the unmangled names can be used in the client code. This library is intentionally small, with three output-related functions, one related to operations on complex numbers, and four functions related to environment (specifically `Environment::Scope`) operations.
+The functionality of the compiler which needs to be made available to the JIT-compiled code at execution time are listed in this header file. The functions are C++ functions declared with C-linkage, ensuring that the unmangled names can be used in the client code. This library is intentionally small, with three output-related functions, one related to operations on complex numbers, and eight functions related to run-time environment operations.
 
 ```cpp
 extern "C" {
@@ -560,9 +676,17 @@ void setVariable(abaci::utility::Environment *environment, char *name, abaci::ut
 
 abaci::utility::AbaciValue *getVariable(abaci::utility::Environment *environment, char *name);
 
+void setObjectData(abaci::utility::Environment *environment, char *name, int *indices, abaci::utility::AbaciValue *value);
+
+abaci::utility::AbaciValue *getObjectData(abaci::utility::Environment *environment, char *name, int *indices);
+
 void beginScope(abaci::utility::Environment *environment);
 
 void endScope(abaci::utility::Environment *environment);
+
+void setThisPtr(abaci::utility::Environment *environment, abaci::utility::AbaciValue *ptr);
+
+void unsetThisPtr(abaci::utility::Environment *environment);
 
 }
 ```
@@ -595,6 +719,9 @@ void printValue(AbaciValue *value) {
         case AbaciValue::String:
             fwrite(reinterpret_cast<const char*>(value->value.str->ptr), value->value.str->len, 1, stdout);
             break;
+        case AbaciValue::Object:
+            print("<Instance of {}>", reinterpret_cast<const char*>(value->value.object->class_name));
+            break;
         default:
             print("{}?", static_cast<int>(value->type));
             break;
@@ -602,7 +729,7 @@ void printValue(AbaciValue *value) {
 }
 ```
 
-Function `printComma()` is intended to pad and separate fields after a `print Something,` command (where more than one comma is permitted), however currently only a single space character is output. Function `printLn()` simply outputs a newline character, this is suppressed with a trailing semi-colon, as in `print Something;`.
+Function `printComma()` is intended to pad and separate fields after a `print <value>,` command (where more than one comma is permitted), however currently only a single space character is output. Function `printLn()` simply outputs a newline character, this is suppressed with a trailing semi-colon, as in `print <value>;`.
 
 ```cpp
 void printComma() {
@@ -668,6 +795,28 @@ AbaciValue *getVariable(Environment *environment, char *name) {
 }
 ```
 
+Functions `setObjectData()` and `getObjectData()` perform lookup of an object by name (which may be `this`), and travel down as many levels of nesting as are specified by the `indices` array. The `data` value thus obtained is then assigned to or returned by pointer, respectively.
+
+```cpp
+void setObjectData(Environment *environment, char *name, int *indices, AbaciValue *value) {
+    auto data = (strcmp(name, THIS) == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
+    while (*indices != -1) {
+        data = &data->value.object->variables[*indices];
+        ++indices;
+    }
+    *data = *value;
+}
+
+AbaciValue *getObjectData(Environment *environment, char *name, int *indices) {
+    auto data = (strcmp(name, THIS) == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
+    while (*indices != -1) {
+        data = &data->value.object->variables[*indices];
+        ++indices;
+    }
+    return data;
+}
+```
+
 Functions `beginScope()` and `endScope()` are called by code at execution time when entering and leaving a lexical scope, respectively.
 
 ```cpp
@@ -677,6 +826,18 @@ void beginScope(Environment *environment) {
 
 void endScope(Environment *environment) {
     environment->endScope();
+}
+```
+
+Functions `setThisPtr()` and `unsetThisPtr()` are used to manage the stack of "this pointers" held in the `Environment`, and are called when entering and leaving a method invocation.
+
+```cpp
+void setThisPtr(Environment *environment, AbaciValue *ptr) {
+    environment->setThisPtr(ptr);
+}
+
+void unsetThisPtr(abaci::utility::Environment *environment) {
+    environment->unsetThisPtr();
 }
 ```
 
@@ -694,7 +855,7 @@ The basis for the design of class `ExprNode` is the variant container type `std:
 
 The solution chosen was to abandon Boost Fusion (along with `x3::variant`) and instead create generic copy constructors and copy assignment constructors which would populate the correct field of the `std::variant` outlined above. (These steps appear to be all which is needed to make a C++ class compatible with X3.) It is still the responsibility of the X3 rule and its helper functions to correctly set the `association` data member of any `ExprList` containing an `ExprNode`, while none of the other types use it at all, which may appear incongruous at first glance.
 
-Definition of this class begins with a forward-declaration and definitions of all of the possible types of the `std::variant`.
+Definition of this class begins with a forward-declaration and definitions of all of the possible types of the `std::variant`. The types `ValueCall`, `DataCall` and `MethodValueCall` are used to hold information related to function calls, object member selection and object method calls.
 
 ```cpp
 namespace abaci::ast {
@@ -711,6 +872,18 @@ struct ValueCall {
     std::string name;
     ExprList args;
 };
+
+struct DataCall {
+    Variable name;
+    std::vector<Variable> member_list;
+};
+
+struct MethodValueCall {
+    Variable name;
+    std::vector<Variable> member_list;
+    std::string method;
+    ExprList args;
+};
 ```
 
 The class definition itself begins with two plain enums, `Association` and `Type` (which holds the same order as types specified in the `std::variant`), followed by defaulted constructors.
@@ -719,7 +892,7 @@ The class definition itself begins with two plain enums, `Association` and `Type
 class ExprNode {
 public:
     enum Association { Unset, Left, Right, Unary, Boolean };
-    enum Type { ValueNode, OperatorNode, ListNode, VariableNode, CallNode };
+    enum Type { ValueNode, OperatorNode, ListNode, VariableNode, CallNode, DataNode, MethodNode };
     ExprNode() = default;
     ExprNode(const ExprNode&) = default;
     ExprNode& operator=(const ExprNode&) = default;
@@ -740,17 +913,19 @@ The "getters" and private member variables complete the class definition. The sw
     Association getAssociation() const { return association; }
     const auto& get() const { return data; }
 private:
-    std::variant<AbaciValue,Operator,ExprList,Variable,ValueCall> data;
+    std::variant<AbaciValue,Operator,ExprList,Variable,ValueCall,DataCall,MethodValueCall> data;
     Association association{ Unset };
 };
 
 } // namespace abaci::ast
 ```
 
-The class `ValueCall` is then adapted by Boost Fusion to be able to be used with an X3 rule&mdash;this takes place at global (not namespace) scope.
+The classes `ValueCall`, `DataCall` and `MethodValueCall` are then adapted by Boost Fusion to be able to be used with an X3 rule&mdash;this takes place at global (not namespace) scope.
 
 ```cpp
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::ValueCall, name, args)
+BOOST_FUSION_ADAPT_STRUCT(abaci::ast::DataCall, name, member_list)
+BOOST_FUSION_ADAPT_STRUCT(abaci::ast::MethodValueCall, name, member_list, method, args)
 ```
 
 ### `Stmt.hpp`
@@ -875,6 +1050,24 @@ struct Class : StmtData {
     FunctionList methods;    
 };
 
+struct DataAssignStmt : StmtData {
+    Variable name;
+    std::vector<Variable> member_list;
+    Operator assign;
+    ExprNode value;
+};
+
+struct MethodCall : StmtData {
+    Variable name;
+    std::vector<Variable> member_list;
+    std::string method;
+    ExprList args;
+};
+
+struct ExpressionStmt : StmtData {
+    ExprNode expression;
+};
+
 } // namespace abaci::ast
 ```
 
@@ -895,6 +1088,9 @@ BOOST_FUSION_ADAPT_STRUCT(abaci::ast::FunctionCall, name, args)
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::ReturnStmt, expression)
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::ExprFunction, name, parameters, to, expression)
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::Class, name, variables, methods)
+BOOST_FUSION_ADAPT_STRUCT(abaci::ast::DataAssignStmt, name, member_list, assign, value)
+BOOST_FUSION_ADAPT_STRUCT(abaci::ast::MethodCall, name, member_list, method, args)
+BOOST_FUSION_ADAPT_STRUCT(abaci::ast::ExpressionStmt, expression)
 ```
 
 ## Directory `parser`
@@ -961,39 +1157,6 @@ namespace abaci::parser {
 
 namespace x3 = boost::spirit::x3;
 using abaci::utility::AbaciValue;
-using abaci::utility::Complex;
-using abaci::utility::Operators;
-using abaci::utility::Operator;
-using abaci::utility::String;
-using abaci::utility::Variable;
-
-using x3::char_;
-using x3::string;
-using x3::lit;
-using x3::lexeme;
-using x3::ascii::space;
-
-using abaci::ast::ExprNode;
-using abaci::ast::ExprList;
-using abaci::ast::ValueCall;
-using abaci::ast::StmtNode;
-using abaci::ast::StmtList;
-using abaci::ast::CommentStmt;
-using abaci::ast::PrintStmt;
-using abaci::ast::PrintList;
-using abaci::ast::InitStmt;
-using abaci::ast::AssignStmt;
-using abaci::ast::IfStmt;
-using abaci::ast::WhileStmt;
-using abaci::ast::RepeatStmt;
-using abaci::ast::CaseStmt;
-using abaci::ast::WhenStmt;
-using abaci::ast::WhenList;
-using abaci::ast::Function;
-using abaci::ast::FunctionCall;
-using abaci::ast::ReturnStmt;
-using abaci::ast::ExprFunction;
-using abaci::ast::Class;
 ```
 
 X3 rule declarations take two template parameters, the class type and the semantic type for the rule. The declaration rule `rule_1` must have a corresponding definition `rule_1_def` later in the implementation file in order to use it with `BOOST_SPIRIT_DEFINE()`. The rules related to expressions are listed first, many of which simply associate a token with an `abaci::utility::Operator`. The pairs of rules, such as `logic_and` and `logic_and_n`, are used to prevent flattening of an expression AST to a single array.
@@ -1053,7 +1216,12 @@ x3::rule<class index, ExprList> const index;
 x3::rule<class primary_n, ExprNode> const primary_n;
 x3::rule<class identifier, std::string> const identifier;
 x3::rule<class variable, Variable> const variable;
+x3::rule<class this_ptr, Variable> const this_ptr;
 x3::rule<class function_value_call, ValueCall> const function_value_call;
+x3::rule<class data_value_call, DataCall> const data_value_call;
+x3::rule<class this_value_call, DataCall> const this_value_call;
+x3::rule<class data_method_call, MethodValueCall> const data_method_call;
+x3::rule<class this_method_call, MethodValueCall> const this_method_call;
 ```
 
 Then come the rules related to statements, where the `_items` rules are described by a struct from `ast/Stmt.hpp` and the `_stmt` rules are of type `StmtNode` from the same header file.
@@ -1088,6 +1256,14 @@ x3::rule<class return_items, ReturnStmt> const return_items;
 x3::rule<class return_stmt, StmtNode> const return_stmt;
 x3::rule<class class_items, Class> const class_items;
 x3::rule<class class_template, StmtNode> const class_template;
+x3::rule<class data_assign_items, DataAssignStmt> const data_assign_items;
+x3::rule<class data_assign_stmt, StmtNode> const data_assign_stmt;
+x3::rule<class method_call_items, MethodCall> const method_call_items;
+x3::rule<class this_call_items, MethodCall> const this_call_items;
+x3::rule<class method_call, StmtNode> const method_call;
+x3::rule<class this_assign_items, DataAssignStmt> const this_assign_items;
+x3::rule<class expression_stmt_items, ExpressionStmt> const expression_stmt_items;
+x3::rule<class expression_stmt, StmtNode> const expression_stmt;
 x3::rule<class keywords, std::string> const keywords;
 x3::rule<class statment, StmtNode> const statement;
 x3::rule<class block, StmtList> const block;
@@ -1249,10 +1425,15 @@ Rules for UTF-8 identifiers as both variables and value call components come nex
 const auto identifier_def = lexeme[( ( char_('A', 'Z') | char_('a', 'z') | char_('\'') | char_('\200', '\377') )
     >> *( char_('A', 'Z') | char_('a', 'z') | char_('0', '9') | char_('_') | char_('\'') | char_('\200', '\377') ) ) - keywords];
 const auto variable_def = identifier[makeVariable];
+const auto this_ptr_def = string(THIS)[makeVariable];
 const auto function_value_call_def = identifier >> call_args;
+const auto data_value_call_def = variable >> +( DOT >> variable );
+const auto this_value_call_def = this_ptr >> +( DOT >> variable );
+const auto data_method_call_def = variable >> DOT >> *( variable >> DOT ) >> identifier >> call_args;
+const auto this_method_call_def = this_ptr >> DOT >> *( variable >> DOT ) >> identifier >> call_args;
 ```
 
-The rules for expressions come in pairs, for example `logic_and_n_def` and `logic_and_def` (the `_n` stands for "node"). They are listed in order of precedence from low to high, note that `primary_n_def` calls `logic_or[MakeNode<ExprNode::Boolean>()]` directly and not `expression` for its (recursive) parenthesised expression evaluation.
+The rules for expressions come in pairs, for example `logic_and_n_def` and `logic_and_def` (the `_n` stands for "node"). They are listed in order of precedence from low to high, note that `primary_n_def` calls `logic_or[MakeNode<ExprNode::Boolean>()]` directly and not `expression` for its (recursive) parenthesised expression evaluation; the same rule matches object data extraction and method/function calls.
 
 ```cpp
 const auto expression_def = logic_or[MakeNode<ExprNode::Boolean>()];
@@ -1278,14 +1459,16 @@ const auto unary_n_def = unary[MakeNode<ExprNode::Unary>()];
 const auto unary_def = *( minus | logical_not | bitwise_compl ) >> index_n;
 const auto index_n_def = index[MakeNode<ExprNode::Right>()];
 const auto index_def = primary_n >> *( exponent >> unary_n );
-const auto primary_n_def = value[MakeNode<>()] | LEFT_PAREN >> logic_or[MakeNode<ExprNode::Boolean>()] >> RIGHT_PAREN | function_value_call[MakeNode<>()] | variable[MakeNode<>()];
+const auto primary_n_def = value[MakeNode<>()] | LEFT_PAREN >> logic_or[MakeNode<ExprNode::Boolean>()] >> RIGHT_PAREN
+    | function_value_call[MakeNode<>()] | this_method_call[MakeNode<>()] | data_method_call[MakeNode<>()] 
+    | this_value_call[MakeNode<>()] | data_value_call[MakeNode<>()] | variable[MakeNode<>()];
 ```
 
 The keywords are listed in order to disallow them as identifier names, note the first `lit(AND)` allows use of `|` with subsequent `const char *` items.
 
 ```cpp
 const auto keywords_def = lit(AND) | CASE | CLASS | ELSE | ENDCASE | ENDCLASS | ENDFN | ENDIF | ENDWHILE
-    | FALSE | FN | IF | LET | NIL | NOT | OR | PRINT | RETURN | TRUE | WHEN | WHILE;
+    | FALSE | FN | IF | LET | NIL | NOT | OR | PRINT | RETURN | THIS | TRUE | WHEN | WHILE;
 ```
 
 Next are the statement rules themselves, which are what gives the reader (and parser function) an idea of the syntax of the Abaci0 language. All of the different values for rule definition `statement_def` are of type `StmtNode`, and hence all must make use of `MakeStmt<...Stmt>()` in order to appear to be the same type.
@@ -1372,17 +1555,30 @@ const auto return_items_def = expression;
 const auto return_stmt_def = RETURN >> return_items[MakeStmt<ReturnStmt>()];
 ```
 
-Keyword `class` allows class definitions with member variables and optional member functions to be entered. [Note: Further use of classes is not currently implemented.]
+Keyword `class` allows class definitions with member variables and optional member functions to be entered. Data member and "this" assignment, and method calls are supported for objects created from a class definition.
 
 ```cpp
 const auto class_items_def = identifier >> function_parameters >> *(FN >> function_items >> ENDFN);
 const auto class_template_def = CLASS >> class_items[MakeStmt<Class>()] >> ENDCLASS;
+const auto data_assign_items_def = variable >> +( DOT >> variable ) >> from >> expression;
+const auto this_assign_items_def = this_ptr >> +( DOT >> variable ) >> from >> expression;
+const auto data_assign_stmt_def = this_assign_items[MakeStmt<DataAssignStmt>()] | data_assign_items[MakeStmt<DataAssignStmt>()];
+const auto this_call_items_def = this_ptr >> DOT >> *( variable >> DOT ) >> identifier >> call_args;
+const auto method_call_items_def = variable >> DOT >> *( variable >> DOT ) >> identifier >> call_args;
+const auto method_call_def = this_call_items[MakeStmt<MethodCall>()] | method_call_items[MakeStmt<MethodCall>()];
+```
+
+Expressions-as-statements are not permitted in the Abaci0 language, so to avoid expressions being rejected as syntax errors they are matched by a rule and then flagged as errors later.
+
+```cpp
+const auto expression_stmt_items_def = expression;
+const auto expression_stmt_def = expression_stmt_items[MakeStmt<ExpressionStmt>()];
 ```
 
 The order of the rules for `statement_def` is significant in some cases because greedy matching does not (and cannot) take place, the first (partially) matching rule always wins. (Expression functions must be before `let` statements.)
 
 ```cpp
-const auto statement_def = if_stmt | print_stmt | expression_function | let_stmt | assign_stmt | while_stmt | repeat_stmt | case_stmt | function | function_call | return_stmt | class_template | comment; 
+const auto statement_def = if_stmt | print_stmt | expression_function | let_stmt | method_call | data_assign_stmt | assign_stmt | while_stmt | repeat_stmt | case_stmt | function | function_call | return_stmt | class_template | expression_stmt | comment;
 ```
 
 The power of X3 is demonstrated by `block_def` as being simply a list of zero or more `statement`s.
@@ -1403,13 +1599,16 @@ BOOST_SPIRIT_DEFINE(expression, logic_or, logic_and, logic_and_n,
     bit_or, bit_or_n, bit_xor, bit_xor_n, bit_and, bit_and_n,
     equality, equality_n, comparison, comparison_n,
     term, term_n, factor, factor_n, unary, unary_n, index, index_n, primary_n)
-BOOST_SPIRIT_DEFINE(identifier, variable, function_value_call, keywords,
+BOOST_SPIRIT_DEFINE(identifier, variable, function_value_call, data_value_call, this_value_call,
+    data_method_call, this_method_call, keywords,
     comment_items, comment, print_items, print_stmt,
     let_items, let_stmt, assign_items, assign_stmt, if_items, if_stmt,
     when_items, while_items, while_stmt, repeat_items, repeat_stmt, case_items, case_stmt,
     function_parameters, function_items, function, call_args, call_items, function_call,
     expression_function_items, expression_function,
-    return_items, return_stmt, class_items, class_template, statement, block)
+    return_items, return_stmt, class_items, class_template, data_assign_items, data_assign_stmt,
+    this_ptr, this_assign_items, this_call_items,
+    method_call_items, method_call, expression_stmt_items, expression_stmt, statement, block)
 ```
 
 The three functions declared in `parser/Parse.hpp` all call `phrase_parse()` with an iterator range, rule name, space skipper class and a reference to the target (intially empty) AST being constructed. It is `phrase_parse()`'s instantiation which really tests the template metaprogramming logic in the parser rule definitions, and can cause very long error messages to be output. Notice that variable `iter` is updated to point to the first unprocessed input character, so `parse_statement()` uses this fact to modify its parameter `stmt_str`.
@@ -1440,75 +1639,76 @@ bool test_statement(const std::string& stmt_str) {
 
 ### `Keywords.hpp`
 
-This header file specifies all of the Abaci0 keywords and symbolic tokens. In order to translate Abaci0 into a non-English language, or provide single (UTF-8) symbols for sequences such as ">=", modifing this file should be all that is required. The macro `SYMBOLIC` allows for the second parameter to include any Unicode character specified as `\U...` or `\u...`, and `inline` allows multiple inlusion of this header file with symbols able to be resolved by the linker. [Note: Error messages and other diagnostics would still be in English as they are currently hard-coded into the source files, this may be addressed in the future.]
+This header file specifies all of the Abaci0 keywords and symbolic tokens. In order to translate Abaci0 into a non-English language, or provide single (UTF-8) symbols for sequences such as ">=", modifing this file should be all that is required. The macro `SYMBOL()` allows for the second parameter to include any Unicode character specified as `\U...` or `\u...`, and `inline` allows multiple inlusion of this header file with symbols able to be resolved by the linker. [Note: Error messages and other diagnostics would still be in English as they are currently hard-coded into the source files, this may be addressed in the future.]
 
 ```cpp
-#define SYMBOLIC(TOKEN, VALUE) inline const char *TOKEN = reinterpret_cast<const char *>(u8##VALUE)
+#define SYMBOL(TOKEN, VALUE) inline const char *TOKEN = reinterpret_cast<const char *>(u8##VALUE)
 
-SYMBOLIC(AND, "and");
-SYMBOLIC(CASE, "case");
-SYMBOLIC(CLASS, "class");
-SYMBOLIC(ELSE, "else");
-SYMBOLIC(ENDCASE, "endcase");
-SYMBOLIC(ENDCLASS, "endclass");
-SYMBOLIC(ENDFN, "endfn");
-SYMBOLIC(ENDIF, "endif");
-SYMBOLIC(ENDWHILE, "endwhile");
-SYMBOLIC(FALSE, "false");
-SYMBOLIC(FN, "fn");
-SYMBOLIC(IF, "if");
-SYMBOLIC(LET, "let");
-SYMBOLIC(NIL, "nil");
-SYMBOLIC(NOT, "not");
-SYMBOLIC(OR, "or");
-SYMBOLIC(PRINT, "print");
-SYMBOLIC(REM, "rem");
-SYMBOLIC(REPEAT, "repeat");
-SYMBOLIC(RETURN, "return");
-SYMBOLIC(TRUE, "true");
-SYMBOLIC(UNTIL, "until");
-SYMBOLIC(WHEN, "when");
-SYMBOLIC(WHILE, "while");
+SYMBOL(AND, "and");
+SYMBOL(CASE, "case");
+SYMBOL(CLASS, "class");
+SYMBOL(ELSE, "else");
+SYMBOL(ENDCASE, "endcase");
+SYMBOL(ENDCLASS, "endclass");
+SYMBOL(ENDFN, "endfn");
+SYMBOL(ENDIF, "endif");
+SYMBOL(ENDWHILE, "endwhile");
+SYMBOL(FALSE, "false");
+SYMBOL(FN, "fn");
+SYMBOL(IF, "if");
+SYMBOL(LET, "let");
+SYMBOL(NIL, "nil");
+SYMBOL(NOT, "not");
+SYMBOL(OR, "or");
+SYMBOL(PRINT, "print");
+SYMBOL(REM, "rem");
+SYMBOL(REPEAT, "repeat");
+SYMBOL(RETURN, "return");
+SYMBOL(THIS, "this");
+SYMBOL(TRUE, "true");
+SYMBOL(UNTIL, "until");
+SYMBOL(WHEN, "when");
+SYMBOL(WHILE, "while");
 
-SYMBOLIC(PLUS, "+");
-SYMBOLIC(MINUS, "-");
-SYMBOLIC(TIMES, "*");
-SYMBOLIC(DIVIDE, "/");
-SYMBOLIC(MODULO, "%");
-SYMBOLIC(FLOOR_DIVIDE, "//");
-SYMBOLIC(EXPONENT, "**");
+SYMBOL(PLUS, "+");
+SYMBOL(MINUS, "-");
+SYMBOL(TIMES, "*");
+SYMBOL(DIVIDE, "/");
+SYMBOL(MODULO, "%");
+SYMBOL(FLOOR_DIVIDE, "//");
+SYMBOL(EXPONENT, "**");
 
-SYMBOLIC(EQUAL, "=");
-SYMBOLIC(NOT_EQUAL, "/=");
-SYMBOLIC(LESS, "<");
-SYMBOLIC(LESS_EQUAL, "<=");
-SYMBOLIC(GREATER_EQUAL, ">=");
-SYMBOLIC(GREATER, ">");
+SYMBOL(EQUAL, "=");
+SYMBOL(NOT_EQUAL, "/=");
+SYMBOL(LESS, "<");
+SYMBOL(LESS_EQUAL, "<=");
+SYMBOL(GREATER_EQUAL, ">=");
+SYMBOL(GREATER, ">");
 
-SYMBOLIC(BITWISE_AND, "&");
-SYMBOLIC(BITWISE_OR, "|");
-SYMBOLIC(BITWISE_XOR, "^");
-SYMBOLIC(BITWISE_COMPL, "~");
+SYMBOL(BITWISE_AND, "&");
+SYMBOL(BITWISE_OR, "|");
+SYMBOL(BITWISE_XOR, "^");
+SYMBOL(BITWISE_COMPL, "~");
 
-SYMBOLIC(COMMA, ",");
-SYMBOLIC(DOT, ".");
-SYMBOLIC(SEMICOLON, ";");
-SYMBOLIC(COLON, ":");
-SYMBOLIC(LEFT_PAREN, "(");
-SYMBOLIC(RIGHT_PAREN, ")");
-SYMBOLIC(FROM, "<-");
-SYMBOLIC(TO, "->");
-SYMBOLIC(IMAGINARY, "j");
-SYMBOLIC(HEX_PREFIX, "0x");
-SYMBOLIC(OCT_PREFIX, "0");
-SYMBOLIC(BIN_PREFIX, "0b");
+SYMBOL(COMMA, ",");
+SYMBOL(DOT, ".");
+SYMBOL(SEMICOLON, ";");
+SYMBOL(COLON, ":");
+SYMBOL(LEFT_PAREN, "(");
+SYMBOL(RIGHT_PAREN, ")");
+SYMBOL(FROM, "<-");
+SYMBOL(TO, "->");
+SYMBOL(IMAGINARY, "j");
+SYMBOL(HEX_PREFIX, "0x");
+SYMBOL(OCT_PREFIX, "0");
+SYMBOL(BIN_PREFIX, "0b");
 ```
 
 ## Directory `codegen`
 
-The implementation files `codegen/ExprCodeGen.cpp` and `codegen/StmtCodeGen.cpp` contain almost all of the code for translating the constructed Abstract Syntax Tree into LLVM API calls. By necessity they are quite lengthy (~700 and ~400 lines) and in particular class `ExprCodeGen` contains a sizeable `operator()` member function which handles code generation of arbitrarily complex `ExprNode` trees (and calls itself recursively at numerous points). Class `StmtCodeGen` parses both single statements and blocks, calling a generic function `codeGen()` which is specialized in the implementation file to the statement types in `ast/Stmt.hpp`.
+The implementation files `codegen/ExprCodeGen.cpp` and `codegen/StmtCodeGen.cpp` contain almost all of the code for translating the constructed Abstract Syntax Tree into LLVM API calls. By necessity they are quite lengthy (~900 and ~500 lines) and in particular class `ExprCodeGen` contains a sizeable `operator()` member function which handles code generation of arbitrarily complex `ExprNode` trees (and calls itself recursively at numerous points). Class `StmtCodeGen` parses both single statements and blocks, calling a generic function `codeGen()` which is specialized in the implementation file to the statement types in `ast/Stmt.hpp`.
 
-Implementation file `codegen/TypeCodeGen.cpp` exists to cover up a hole in the static type system, which is that functions returning a value must be partially evaluated in order to determine this return type. The return type may depend upon parameter type(s) and global variables, and therefore a complete parse of the function, including all the lexical sub-scopes, is performed by the two classes `TypeEvalGen` and `TypeCodeGen`.
+Implementation file `codegen/TypeCodeGen.cpp` exists to cover up a hole in the static type system, which is that functions returning a value must be partially evaluated in order to determine this return type. The return type may depend upon parameter type(s) and global variables, and therefore a complete parse of the function, including all the lexical sub-scopes, is performed by the two classes `TypeEvalGen` and `TypeCodeGen`. Similarly for classes, member types can only be evaluated from the initializer and methods must be partially evaluated to determine their return type.
 
 ### `CodeGen.hpp`
 
@@ -1518,12 +1718,12 @@ This file is declared within a namespace, and defines four classes.
 namespace abaci::codegen {
 ```
 
-Class `ExprCodeGen` is initialized from a `JIT` instance, from which it obtains convenience references to `llvm::IRBuilder<>` and `llvm::Module` used throughout its implementation. Its purpose is to reduce an `ExprNode` tree to a single `StackType`, consisting of a `std::pair` containing an `llvm::Value*` (always an LLVM register) and a `AbaciValue::Type` (known at compile-time to due to the static type system). The stack itself is simply a `std::vector<StackType>` qualified with `mutable` so that `operator()` can be declared `const`, and private functions `pop()` and `push()` operate on this stack. 
+Class `ExprCodeGen` is initialized from a `JIT` instance, from which it obtains convenience references to `llvm::IRBuilder<>` and `llvm::Module` used throughout its implementation. Its purpose is to reduce an `ExprNode` tree to a single `StackType`, consisting of a `std::pair` containing an `llvm::Value*` (always an LLVM register) and an `Environment::DefineScope::Type` (known at compile-time to due to the static type system). The stack itself is simply a `std::vector<StackType>` qualified with `mutable` so that `operator()` can be declared `const`, and private functions `pop()` and `push()` operate on this stack. 
 
 After a (single) call to `operator()` for any arbitrarily complex expression, the expected size of the stack is exactly 1, and the contents of this are returned by the `get()` member function. The member function `toBoolean()` creates a truth value for its input (as an `llvm::Value*`), while `promote()` ensures that numeric types are promoted so that the various Math operations are applied to entities of the same type.
 
 ```cpp
-using StackType = std::pair<Value*,AbaciValue::Type>;
+using StackType = std::pair<Value*,Environment::DefineScope::Type>;
 
 class ExprCodeGen {
     JIT& jit;
@@ -1574,11 +1774,11 @@ private:
 };
 ```
 
-The final two classes are initialized from an `Environment` pointer and a `Cache` pointer (from `engine/Cache.hpp`). In order to return a type for a particular function, class `TypeEvalGen` maintains a stack, however being an analysis pass it is only concerned with the `AbaciValue::Type`. Functions `pop()` and `push()` manage this stack and `get()` again expects a size of exactly 1. Functions `operator()` and `promote()` are present, giving some further degree of similarity to class `ExprCodeGen`. Class `TypeCodeGen` has three more data members (other than the constructor parameters), these being a `is_function` flag to allow or disallow `return` statements, a `type_is_set` flag and an `AbaciValue::Type` called `return_type`. The first is set by the constructor while the last two are only set by the specialization of `codeGen()` for an Abaci0 `return` statment, and can be queried by client code with method `get()`.
+The final two classes are initialized from an `Environment` pointer and a `Cache` pointer (from `engine/Cache.hpp`). In order to return a type for a particular function, class `TypeEvalGen` maintains a stack, however being an analysis pass it is only concerned with the `Environment::DefineScope::Type`. Functions `pop()` and `push()` manage this stack and `get()` again expects a size of exactly 1. Functions `operator()` and `promote()` are present, giving some further degree of similarity to class `ExprCodeGen`. Class `TypeCodeGen` has three more data members (other than the constructor parameters), these being a `is_function` flag to allow or disallow `return` statements, a `type_is_set` flag and an `Environment::DefineScope::Type` called `return_type`. The first is set by the constructor while the last two are only set by the specialization of `codeGen()` for an Abaci0 `return` statment, and can be queried by client code with method `get()`.
 
 ```cpp
 class TypeEvalGen {
-    mutable std::vector<AbaciValue::Type> stack;
+    mutable std::vector<Environment::DefineScope::Type> stack;
     Environment *environment;
     Cache *cache;
     auto pop() const {
@@ -1587,18 +1787,18 @@ class TypeEvalGen {
         stack.pop_back();
         return value;
     }
-    void push(AbaciValue::Type value) const {
+    void push(const Environment::DefineScope::Type& value) const {
         stack.push_back(value);
     }
 public:
     TypeEvalGen() = delete;
     TypeEvalGen(Environment *environment, Cache *cache) : environment{ environment }, cache{ cache } {}
-    AbaciValue::Type get() const {
+    Environment::DefineScope::Type get() const {
         Assert(stack.size() == 1)
         return stack.front();
     }
     void operator()(const abaci::ast::ExprNode&) const;
-    AbaciValue::Type promote(AbaciValue::Type, AbaciValue::Type) const;
+    AbaciValue::Type promote(Environment::DefineScope::Type, Environment::DefineScope::Type) const;
 };
 
 class TypeCodeGen {
@@ -1606,14 +1806,14 @@ class TypeCodeGen {
     Cache *cache;
     bool is_function;
     mutable bool type_is_set{ false };
-    mutable AbaciValue::Type return_type;
+    mutable Environment::DefineScope::Type return_type;
 public:
     TypeCodeGen() = delete;
     TypeCodeGen(Environment *environment, Cache *cache, bool is_function = false)
         : environment{ environment }, cache{ cache }, is_function{ is_function } {}
     void operator()(const abaci::ast::StmtList&) const;
     void operator()(const abaci::ast::StmtNode&) const;
-    auto get() const {
+    Environment::DefineScope::Type get() const {
         if (type_is_set) {
             return return_type;
         }
@@ -1631,7 +1831,7 @@ private:
 
 ### `ExprCodeGen.cpp`
 
-The whole of the `llvm` namespace is made available to this implementation file, together with four other types. The (sizeable) `operator()` function is based around switching upon the type of the `std::variant` in the `ExprNode` parameter, and in the case of it being an `ExprList`, additionally switching on its arithmetic association.
+The whole of the `llvm` namespace is made available to this implementation file, together with six other types. The (sizeable) `operator()` function is based around switching upon the type of the `std::variant` in the `ExprNode` parameter, and in the case of it being an `ExprList`, additionally switching on its arithmetic association.
 
 ```cpp
 using namespace llvm;
@@ -1641,6 +1841,8 @@ namespace abaci::codegen {
 using abaci::ast::ExprNode;
 using abaci::ast::ExprList;
 using abaci::ast::ValueCall;
+using abaci::ast::DataCall;
+using abaci::ast::MethodValueCall;
 using abaci::utility::Operator;
 
 void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
@@ -1687,7 +1889,7 @@ For a `ValueNode` the value is extracted from the data in the AST and pushed to 
                     break;
                 }
                 case AbaciValue::Object:
-                    UnexpectedError("Cannot reassign objects.");
+                    UnexpectedError("Cannot assign objects.");
                 default:
                     UnexpectedError("Not yet implemented");
             }
@@ -1707,9 +1909,9 @@ In the case of an `VariableNode` the name is stored in the generated code before
             Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
             auto abaci_value = builder.CreateCall(module.getFunction("getVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()) });
             Value *raw_value = builder.CreateLoad(builder.getInt64Ty(), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
-            auto type = static_cast<AbaciValue::Type>(environment->getCurrentDefineScope()->getType(variable.get()) & AbaciValue::TypeMask);
+            auto type = environment->getCurrentDefineScope()->getType(variable.get());
             Value *value;
-            switch (type) {
+            switch (environmentTypeToType(type)) {
                 case AbaciValue::Nil:
                 case AbaciValue::Integer:
                     value = raw_value;
@@ -1726,6 +1928,9 @@ In the case of an `VariableNode` the name is stored in the generated code before
                 case AbaciValue::String:
                     value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.String"), 0));
                     break;
+                case AbaciValue::Object:
+                    value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.Object"), 0));
+                    break;
                 default:
                     UnexpectedError("Bad type for dereference");
             }
@@ -1734,7 +1939,7 @@ In the case of an `VariableNode` the name is stored in the generated code before
         }
 ```
 
-If a `CallNode` is found, things are slightly more complicated. Firstly it must be determined whether the symbol is a function call or class constructor. [Note: Class construction is currently not implemented.] For a function call, a full evaluation of the actual parameters (arguments) is necessary, before entering a sub-scope which stores the values returned as the names of the parameters from the (previously cached) function definition. The return type of the function is obtained with a call to `getFunctionInstantiationType()` and the type of the return variable (named `_return`) is set along with a zeroized value field. A call to the mangled name of the function (based on the types of the actual parameters) is followed by reading `_return` and pushing a deep copy onto the stack.
+If a `CallNode` is found, things are slightly more complicated. Firstly it must be determined whether the symbol is a function call or class constructor. For a function call, a full evaluation of the actual parameters (arguments) is necessary, before entering a sub-scope which stores the values returned as the names of the parameters from the (previously cached) function definition. The return type of the function is obtained with a call to `getFunctionInstantiationType()` and the type of the return variable (named `_return`) is set along with a zeroized value field. A call to the mangled name of the function (based on the types of the actual parameters) is followed by reading `_return` and pushing a deep copy onto the stack.
 
 ```cpp
         case ExprNode::CallNode: {
@@ -1745,12 +1950,12 @@ If a `CallNode` is found, things are slightly more complicated. Firstly it must 
                     Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(jit.getEnvironment()));
                     Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
                     std::vector<StackType> arguments;
-                    std::vector<AbaciValue::Type> types;
+                    std::vector<Environment::DefineScope::Type> types;
                     for (const auto& arg : call.args) {
                         ExprCodeGen expr(jit);
                         expr(arg);
                         arguments.push_back(expr.get());
-                        types.push_back(static_cast<AbaciValue::Type>(arguments.back().second & AbaciValue::TypeMask));
+                        types.push_back(arguments.back().second);
                     }
                     environment->beginDefineScope();
                     builder.CreateCall(module.getFunction("beginScope"), { typed_environment_ptr });
@@ -1759,11 +1964,17 @@ If a `CallNode` is found, things are slightly more complicated. Firstly it must 
                         AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
                         builder.CreateStore(name, str);
                         auto result = *arg++;
-                        auto type = static_cast<AbaciValue::Type>(result.second | AbaciValue::Constant);
+                        Environment::DefineScope::Type type;
+                        if (std::holds_alternative<AbaciValue::Type>(result.second)) {
+                            type = static_cast<AbaciValue::Type>(std::get<AbaciValue::Type>(result.second) | AbaciValue::Constant);
+                        }
+                        else {
+                            type = result.second;
+                        }
                         environment->getCurrentDefineScope()->setType(parameter.get(), type);
                         auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
                         builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
-                        builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), type), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+                        builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(type)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
                         Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(jit.getEnvironment()));
                         Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
                         builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), true) });
@@ -1775,20 +1986,20 @@ If a `CallNode` is found, things are slightly more complicated. Firstly it must 
                     builder.CreateStore(name, str);
                     auto return_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
                     builder.CreateStore(ConstantInt::get(builder.getInt64Ty(), 0), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), return_value, 0));
-                    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), type), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), return_value, 1));
+                    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(type)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), return_value, 1));
                     builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), return_value, ConstantInt::get(builder.getInt1Ty(), true) });
                     std::string function_name{ mangled(call.name, types) };
                     builder.CreateCall(module.getFunction(function_name), {});
                     auto abaci_value = builder.CreateCall(module.getFunction("getVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()) });
                     Value *raw_value = builder.CreateLoad(builder.getInt64Ty(), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
                     Value *value;
-                    switch (type) {
+                    switch (environmentTypeToType(type)) {
                         case AbaciValue::Nil:
                         case AbaciValue::Integer:
                             value = raw_value;
                             break;
                         case AbaciValue::Boolean:
-                            value = builder.CreateBitCast(raw_value, builder.getInt1Ty());
+                            value = builder.CreateICmpNE(raw_value, ConstantInt::get(builder.getInt64Ty(), 0));
                             break;
                         case AbaciValue::Float:
                             value = builder.CreateBitCast(raw_value, builder.getDoubleTy());
@@ -1814,15 +2025,44 @@ If a `CallNode` is found, things are slightly more complicated. Firstly it must 
                             break;
                         }
                         default:
-                            UnexpectedError("Bad type for dereference");
+                            UnexpectedError("Bad type for return value.");
                     }
                     push({ value, type });
                     builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
                     environment->endDefineScope();
                     break;
                 }
+```
+
+In order to evaluate a class constructor to create an object, the data member values (and their types) must be evaluated to an arbitrary nesting depth. For each level an `abaci::utility::Object` temporary is created, which is later copied and assigned to the correct location in the symbol table.
+
+```cpp
                 case Cache::CacheClass: {
-                    UnexpectedError("Instantiation of classes not yet implemented.");
+                    ArrayType *array = ArrayType::get(jit.getNamedType("struct.AbaciValue"), call.args.size());
+                    AllocaInst *array_value = builder.CreateAlloca(array, nullptr);
+                    Environment::DefineScope::Object stack_type;
+                    stack_type.class_name = call.name;
+                    for (int idx = 0; const auto& value : call.args) {
+                        ExprCodeGen expr(jit);
+                        expr(value);
+                        auto elem_expr = expr.get();
+                        Value *elem_ptr = builder.CreateGEP(array, array_value, { builder.getInt32(0), builder.getInt32(idx) });
+                        Value *elem_value_ptr = builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), elem_ptr, 0);
+                        Value *elem_type_ptr = builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), elem_ptr, 1);
+                        builder.CreateStore(elem_expr.first, elem_value_ptr);
+                        builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(elem_expr.second)), elem_type_ptr);
+                        stack_type.object_types.push_back(elem_expr.second);
+                        ++idx;
+                    }
+                    Constant *name = ConstantDataArray::getString(module.getContext(), call.name.c_str());
+                    AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
+                    builder.CreateStore(name, str);
+                    Value *variables_sz = ConstantInt::get(builder.getInt64Ty(), call.args.size());
+                    AllocaInst *stack_value = builder.CreateAlloca(jit.getNamedType("struct.Object"), nullptr);
+                    builder.CreateStore(str, builder.CreateStructGEP(jit.getNamedType("struct.Object"), stack_value, 0));
+                    builder.CreateStore(variables_sz, builder.CreateStructGEP(jit.getNamedType("struct.Object"), stack_value, 1));
+                    builder.CreateStore(array_value, builder.CreateStructGEP(jit.getNamedType("struct.Object"), stack_value, 2));
+                    push({ stack_value, stack_type });
                     break;
                 }
                 default:
@@ -1832,7 +2072,183 @@ If a `CallNode` is found, things are slightly more complicated. Firstly it must 
         }
 ```
 
-For a `ListNode` a further switch is made on the association type. For `Left` association the first element of the `ExprList` is evaluated on a call to `operator()` (via `(*this)(expr.front())`), and then the remaining `Operator`/`ExprNode` pairs are progressively acted upon to modify the variable `result`, making the types the same using a call to `promote()`. Firstly the obtained type is switched upon followed by switches upon the `Operator`. (In the case of `Operator::Divide`, two `Integer` values are always promoted to `Floating`, `Operator::FloorDivide` is also provided.) For type `AbaciValue::Complex` a call to library function `complexMath()` is needed, while all of the other operations (including string concatenation) are provided by LLVM API call(s). The resulting value and type are pushed onto the stack, replacing the evaluated value(s) which were popped.
+In order to dereference an object's data member, a stack of indices must be created from the class information stored in the cache. Each named member is converted to a zero-based index, and these are then stored in an array for a call to `getObjectData()` at run-time. A reference to the `AbaciValue` returned by this call is stored on the stack.
+
+```cpp
+        case ExprNode::DataNode: {
+            const auto& data = std::get<DataCall>(node.get());
+            Constant *name = ConstantDataArray::getString(module.getContext(), data.name.get().c_str());
+            AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
+            builder.CreateStore(name, str);
+            std::vector<int> indices;
+            auto type = environment->getCurrentDefineScope()->getType(data.name.get());
+            for (const auto& member : data.member_list) {
+                if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
+                    UnexpectedError("Not an object.")
+                }
+                auto object = std::get<Environment::DefineScope::Object>(type);
+                indices.push_back(jit.getCache()->getMemberIndex(jit.getCache()->getClass(object.class_name), member));
+                type = object.object_types.at(indices.back());
+            }
+            indices.push_back(-1);
+            ArrayType *array_type = ArrayType::get(builder.getInt32Ty(), indices.size());
+            Value *indices_array = builder.CreateAlloca(array_type);
+            for (int i = 0; auto idx : indices) {
+                Value *element_ptr = builder.CreateGEP(array_type, indices_array, { builder.getInt32(0), builder.getInt32(i) });
+                builder.CreateStore(builder.getInt32(idx), element_ptr);
+                ++i;
+            }
+            Value *indices_ptr = builder.CreateGEP(array_type, indices_array, { builder.getInt32(0), builder.getInt32(0) });
+            Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
+            Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
+            auto data_value = builder.CreateCall(module.getFunction("getObjectData"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), indices_ptr });
+            Value *raw_value = builder.CreateLoad(builder.getInt64Ty(), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), data_value, 0));
+            Value *value;
+            switch (environmentTypeToType(type)) {
+                case AbaciValue::Nil:
+                case AbaciValue::Integer:
+                    value = raw_value;
+                    break;
+                case AbaciValue::Boolean:
+                    value = builder.CreateICmpNE(raw_value, ConstantInt::get(builder.getInt64Ty(), 0));
+                    break;
+                case AbaciValue::Float:
+                    value = builder.CreateBitCast(raw_value, builder.getDoubleTy());
+                    break;
+                case AbaciValue::Complex:
+                    value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.Complex"), 0));
+                    break;
+                case AbaciValue::String:
+                    value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.String"), 0));
+                    break;
+                case AbaciValue::Object:
+                    value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.Object"), 0));
+                    break;
+                default:
+                    UnexpectedError("Bad type for dereference");
+            }
+            push({ value, type });
+            break;
+        }
+```
+
+Method calls reuse a significant amount of logic from both data member access and global function calls. Firstly the indices to the required object are obtained, and the object data referenced, and secondly a reference to the object is stored in the `Environment` with a call to `setThisPtr()`. Then a call is made to the mangled function symbol, and finally a deep copy of the return value being stored on the stack is followed by a call to `unsetThisPtr()`.
+
+```cpp
+        case ExprNode::MethodNode: {
+            const auto& method_call = std::get<MethodValueCall>(node.get());
+            Constant *object_name = ConstantDataArray::getString(module.getContext(), method_call.name.get().c_str());
+            AllocaInst *object_str = builder.CreateAlloca(object_name->getType(), nullptr);
+            builder.CreateStore(object_name, object_str);
+            std::vector<int> indices;
+            auto object_type = environment->getCurrentDefineScope()->getType(method_call.name.get());
+            for (const auto& member : method_call.member_list) {
+                if (!std::holds_alternative<Environment::DefineScope::Object>(object_type)) {
+                    UnexpectedError("Not an object.")
+                }
+                auto object = std::get<Environment::DefineScope::Object>(object_type);
+                indices.push_back(jit.getCache()->getMemberIndex(jit.getCache()->getClass(object.class_name), member));
+                object_type = object.object_types.at(indices.back());
+            }
+            indices.push_back(-1);
+            ArrayType *array_type = ArrayType::get(builder.getInt32Ty(), indices.size());
+            Value *indices_array = builder.CreateAlloca(array_type);
+            for (int i = 0; auto idx : indices) {
+                Value *element_ptr = builder.CreateGEP(array_type, indices_array, { builder.getInt32(0), builder.getInt32(i) });
+                builder.CreateStore(builder.getInt32(idx), element_ptr);
+                ++i;
+            }
+            Value *indices_ptr = builder.CreateGEP(array_type, indices_array, { builder.getInt32(0), builder.getInt32(0) });
+            Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
+            Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
+            auto data_value = builder.CreateCall(module.getFunction("getObjectData"), { typed_environment_ptr, builder.CreateBitCast(object_str, builder.getInt8PtrTy()), indices_ptr });
+            builder.CreateCall(module.getFunction("setThisPtr"), { typed_environment_ptr, data_value });
+            std::string function_name = std::get<Environment::DefineScope::Object>(object_type).class_name + '.' + method_call.method;
+            const auto& cache_function = jit.getCache()->getFunction(function_name);
+            std::vector<StackType> arguments;
+            std::vector<Environment::DefineScope::Type> types;
+            for (const auto& arg : method_call.args) {
+                ExprCodeGen expr(jit);
+                expr(arg);
+                arguments.push_back(expr.get());
+                types.push_back(arguments.back().second);
+            }
+            environment->beginDefineScope();
+            builder.CreateCall(module.getFunction("beginScope"), { typed_environment_ptr });
+            for (auto arg = arguments.begin(); const auto& parameter : cache_function.parameters) {
+                Constant *name = ConstantDataArray::getString(module.getContext(), parameter.get().c_str());
+                AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
+                builder.CreateStore(name, str);
+                auto result = *arg++;
+                Environment::DefineScope::Type type;
+                if (std::holds_alternative<AbaciValue::Type>(result.second)) {
+                    type = static_cast<AbaciValue::Type>(std::get<AbaciValue::Type>(result.second) | AbaciValue::Constant); 
+                }
+                else {
+                    type = result.second;
+                }
+                environment->getCurrentDefineScope()->setType(parameter.get(), type);
+                auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
+                builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
+                builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(type)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+                builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), true) });
+            }
+            auto type = jit.getCache()->getFunctionInstantiationType(function_name, types);
+            environment->getCurrentDefineScope()->setType("_return", type);
+            Constant *name = ConstantDataArray::getString(module.getContext(), "_return");
+            AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
+            builder.CreateStore(name, str);
+            auto return_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
+            builder.CreateStore(ConstantInt::get(builder.getInt64Ty(), 0), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), return_value, 0));
+            builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(type)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), return_value, 1));
+            builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), return_value, ConstantInt::get(builder.getInt1Ty(), true) });
+            builder.CreateCall(module.getFunction(mangled(function_name, types)), {});
+            auto abaci_value = builder.CreateCall(module.getFunction("getVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()) });
+            Value *raw_value = builder.CreateLoad(builder.getInt64Ty(), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
+            Value *value;
+            switch (environmentTypeToType(type)) {
+                case AbaciValue::Nil:
+                case AbaciValue::Integer:
+                    value = raw_value;
+                    break;
+                case AbaciValue::Boolean:
+                    value = builder.CreateICmpNE(raw_value, ConstantInt::get(builder.getInt64Ty(), 0));
+                    break;
+                case AbaciValue::Float:
+                    value = builder.CreateBitCast(raw_value, builder.getDoubleTy());
+                    break;
+                case AbaciValue::Complex: {
+                    raw_value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.Complex"), 0));
+                    value = builder.CreateAlloca(jit.getNamedType("struct.Complex"));
+                    Value *real = builder.CreateLoad(builder.getDoubleTy(), builder.CreateStructGEP(jit.getNamedType("struct.Complex"), raw_value, 0));
+                    Value *imag = builder.CreateLoad(builder.getDoubleTy(), builder.CreateStructGEP(jit.getNamedType("struct.Complex"), raw_value, 1));
+                    builder.CreateStore(real, builder.CreateStructGEP(jit.getNamedType("struct.Complex"), value, 0));
+                    builder.CreateStore(imag, builder.CreateStructGEP(jit.getNamedType("struct.Complex"), value, 1));
+                    break;
+                }
+                case AbaciValue::String: {
+                    raw_value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.String"), 0));
+                    value = builder.CreateAlloca(jit.getNamedType("struct.String"));
+                    Value *str = builder.CreateLoad(builder.getInt8PtrTy(), builder.CreateStructGEP(jit.getNamedType("struct.String"), raw_value, 0));
+                    Value *len = builder.CreateLoad(builder.getInt64Ty(), builder.CreateStructGEP(jit.getNamedType("struct.String"), raw_value, 1));
+                    AllocaInst *ptr = builder.CreateAlloca(builder.getInt8Ty(), len);
+                    builder.CreateMemCpy(ptr, MaybeAlign(1), str, MaybeAlign(1), len);
+                    builder.CreateStore(ptr, builder.CreateStructGEP(jit.getNamedType("struct.String"), value, 0));
+                    builder.CreateStore(len, builder.CreateStructGEP(jit.getNamedType("struct.String"), value, 1));
+                    break;
+                }
+                default:
+                    UnexpectedError("Bad type for return value.");
+            }
+            push({ value, type });
+            builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
+            builder.CreateCall(module.getFunction("unsetThisPtr"), { typed_environment_ptr });
+            environment->endDefineScope();
+            break;
+        }
+```
+
+For a `ListNode` a further switch is made on the association type. For `Left` association the first element of the `ExprList` is evaluated on a call to `operator()` (via `(*this)(expr.front())`), and then the remaining `Operator`/`ExprNode` pairs are progressively acted upon to modify the variable `result`, making the types the same using a call to `promote()`. Firstly the obtained type is converted to an integral value and switched upon followed by switches upon the `Operator`. (In the case of `Operator::Divide`, two `Integer` values are always promoted to `Floating`, `Operator::FloorDivide` is also provided.) For type `AbaciValue::Complex` a call to library function `complexMath()` is needed, while all of the other operations (including string concatenation) are provided by LLVM API call(s). The resulting value and type are pushed onto the stack, replacing the evaluated value(s) which were popped.
 
 ```cpp
         case ExprNode::ListNode: {
@@ -1845,8 +2261,8 @@ For a `ListNode` a further switch is made on the association type. For `Left` as
                         auto op = std::get<Operator>(iter++->get());
                         (*this)(*iter++);
                         auto operand = pop();
-                        auto type = (operand.second != result.second) ? promote(result, operand) : result.second;
-                        switch (type) {
+                        auto type = !(operand.second == result.second) ? promote(result, operand) : result.second;
+                        switch (environmentTypeToType(type)) {
                             case AbaciValue::Boolean:
                                 switch (op) {
                                     case Operator::BitAnd:
@@ -1980,8 +2396,8 @@ The only `Right` associative operator is `**` (exponentiation) and for this the 
                         auto op = std::get<Operator>(iter++->get());
                         (*this)(*iter++);
                         auto operand = pop();
-                        auto type = (operand.second != result.second) ? promote(result, operand) : result.second;
-                        switch (type) {
+                        auto type = !(operand.second == result.second) ? promote(result, operand) : result.second;
+                        switch (environmentTypeToType(type)) {
                             case AbaciValue::Integer:
                                 switch (op) {
                                     case Operator::Exponent: {
@@ -2042,7 +2458,7 @@ The three `Unary` operators are handled by the next part, obtaining the value at
                     auto type = result.second;
                     for (auto iter = ++expr.rbegin(); iter != expr.rend();) {
                         auto op = std::get<Operator>(iter++->get());
-                        switch (type) {
+                        switch (environmentTypeToType(type)) {
                             case AbaciValue::Boolean:
                                 switch (op) {
                                     case Operator::Not:
@@ -2124,8 +2540,8 @@ Finally the implementation for `Boolean` operators (strictly speaking left assoc
                             auto op = std::get<Operator>(iter++->get());
                             (*this)(*iter++);
                             auto operand = pop();
-                            auto type = (operand.second != result.second) ? promote(result, operand) : result.second;
-                            switch (type) {
+                            auto type = !(operand.second == result.second) ? promote(result, operand) : result.second;
+                            switch (environmentTypeToType(type)) {
                                 case AbaciValue::Boolean:
                                     switch (op) {
                                         case Operator::Equal:
@@ -2282,23 +2698,27 @@ Member function `promote()` takes two `StackType` reference parameters and modif
 
 ```cpp
 AbaciValue::Type ExprCodeGen::promote(StackType& a, StackType& b) const {
-    if (a.second == b.second) {
-        return a.second;
+    if (std::holds_alternative<Environment::DefineScope::Object>(a.second)
+        || std::holds_alternative<Environment::DefineScope::Object>(b.second)) {
+        LogicError("Bad type(s) for operator.")
     }
-    auto type = std::max(a.second, b.second);
+    if (a.second == b.second) {
+        return environmentTypeToType(a.second);
+    }
+    auto type = std::max(environmentTypeToType(a.second), environmentTypeToType(b.second));
     switch (type) {
         case AbaciValue::Boolean:
         case AbaciValue::Integer:
             break;
         case AbaciValue::Float:
-            switch (a.second) {
+            switch (environmentTypeToType(a.second)) {
                 case AbaciValue::Integer:
                     a.first = builder.CreateSIToFP(a.first, Type::getDoubleTy(module.getContext()));
                     break;
                 default:
                     break;
             }
-            switch (b.second) {
+            switch (environmentTypeToType(b.second)) {
                 case AbaciValue::Integer:
                     b.first = builder.CreateSIToFP(b.first, Type::getDoubleTy(module.getContext()));
                     break;
@@ -2307,7 +2727,7 @@ AbaciValue::Type ExprCodeGen::promote(StackType& a, StackType& b) const {
             }
             break;
         case AbaciValue::Complex: {
-            switch (a.second) {
+            switch (environmentTypeToType(a.second)) {
                 case AbaciValue::Integer: {
                     auto real = builder.CreateSIToFP(a.first, Type::getDoubleTy(module.getContext()));
                     auto imag = ConstantFP::get(builder.getDoubleTy(), 0.0);
@@ -2327,7 +2747,7 @@ AbaciValue::Type ExprCodeGen::promote(StackType& a, StackType& b) const {
                 default:
                     break;
             }
-            switch (b.second) {
+            switch (environmentTypeToType(b.second)) {
                 case AbaciValue::Integer: {
                     auto real = builder.CreateSIToFP(b.first, Type::getDoubleTy(module.getContext()));
                     auto imag = ConstantFP::get(builder.getDoubleTy(), 0.0);
@@ -2352,7 +2772,8 @@ AbaciValue::Type ExprCodeGen::promote(StackType& a, StackType& b) const {
         default:
             UnexpectedError("Not yet implemented.");
     }
-    return a.second = b.second = type;
+    a.second = b.second = type;
+    return type;
 }
 ```
 
@@ -2361,7 +2782,7 @@ Member function `toBoolean()` returns a `Value*` which is always a Boolean based
 ```cpp
 Value *ExprCodeGen::toBoolean(StackType& v) const {
     Value *boolean;
-    switch (v.second) {
+    switch (environmentTypeToType(v.second)) {
         case AbaciValue::Boolean:
             boolean = v.first;
             break;
@@ -2398,6 +2819,9 @@ namespace abaci::codegen {
 The `operator()` for `StmtList` creates a new `DefineScope` and a call to create a new `Scope`, before iterating over the statements in the block and closing the scopes. If parameter `exit_block` is set a branch to it is made, and a condition avoiding dead code in the case of the block ending with `return` is used.
 
 ```cpp
+using abaci::ast::ExpressionStmt;
+using abaci::utility::Operator;
+
 void StmtCodeGen::operator()(const StmtList& stmts, BasicBlock *exit_block) const {
     if (!stmts.empty()) {
         Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
@@ -2442,7 +2866,7 @@ void StmtCodeGen::codeGen(const PrintStmt& print) const {
                 auto result = expr.get();
                 auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
                 builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
-                builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), result.second), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+                builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(result.second)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
                 builder.CreateCall(module.getFunction("printValue"), { abaci_value });
                 break;
             }
@@ -2486,13 +2910,19 @@ void StmtCodeGen::codeGen(const InitStmt& define) const {
     ExprCodeGen expr(jit);
     expr(define.value);
     auto result = expr.get();
-    auto type = static_cast<AbaciValue::Type>(result.second | ((define.assign == Operator::Equal) ? AbaciValue::Constant : 0));
+    Environment::DefineScope::Type type;
+    if (std::holds_alternative<AbaciValue::Type>(result.second) && define.assign == Operator::Equal) {
+        type = static_cast<AbaciValue::Type>(std::get<AbaciValue::Type>(result.second) | AbaciValue::Constant); 
+    }
+    else {
+        type = result.second;
+    }
     if (environment->getCurrentDefineScope()->getEnclosing()) {
         environment->getCurrentDefineScope()->setType(define.name.get(), type);
     }
     auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
     builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
-    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), type), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(type)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
     Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
     Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
     builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), true) });
@@ -2507,7 +2937,8 @@ void StmtCodeGen::codeGen(const AssignStmt& assign) const {
     if (!environment->getCurrentDefineScope()->isDefined(assign.name.get())) {
         LogicError("No such variable.");
     }
-    else if (environment->getCurrentDefineScope()->getType(assign.name.get()) & AbaciValue::Constant) {
+    else if (auto type = environment->getCurrentDefineScope()->getType(assign.name.get());
+        std::holds_alternative<AbaciValue::Type>(type) && (std::get<AbaciValue::Type>(type) & AbaciValue::Constant)) {
         LogicError("Cannot assign to constant.");
     }
     Constant *name = ConstantDataArray::getString(module.getContext(), assign.name.get().c_str());
@@ -2516,12 +2947,12 @@ void StmtCodeGen::codeGen(const AssignStmt& assign) const {
     ExprCodeGen expr(jit);
     expr(assign.value);
     auto result = expr.get();
-    if (environment->getCurrentDefineScope()->getType(assign.name.get()) != result.second) {
+    if (!(environment->getCurrentDefineScope()->getType(assign.name.get()) == result.second)) {
         LogicError("Cannot assign to variable with different type.");
     }
     auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
     builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
-    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), result.second), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(result.second)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
     Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
     Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
     builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), false) });
@@ -2537,7 +2968,7 @@ void StmtCodeGen::codeGen(const IfStmt& if_stmt) const {
     expr(if_stmt.condition);
     auto result = expr.get();
     Value *condition;
-    if (result.second == AbaciValue::Boolean) {
+    if (environmentTypeToType(result.second) == AbaciValue::Boolean) {
         condition = result.first;
     }
     else {
@@ -2573,7 +3004,7 @@ void StmtCodeGen::codeGen(const WhileStmt& while_stmt) const {
     expr(while_stmt.condition);
     auto result = expr.get();
     Value *condition;
-    if (result.second == AbaciValue::Boolean) {
+    if (environmentTypeToType(result.second) == AbaciValue::Boolean) {
         condition = result.first;
     }
     else {
@@ -2611,7 +3042,7 @@ void StmtCodeGen::codeGen(const RepeatStmt& repeat_stmt) const {
     expr(repeat_stmt.condition);
     auto result = expr.get();
     Value *condition;
-    if (result.second == AbaciValue::Boolean) {
+    if (environmentTypeToType(result.second) == AbaciValue::Boolean) {
         condition = result.first;
     }
     else {
@@ -2700,7 +3131,7 @@ void StmtCodeGen::codeGen(const FunctionCall& function_call) const {
     Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
     Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
     std::vector<StackType> arguments;
-    std::vector<AbaciValue::Type> types;
+    std::vector<Environment::DefineScope::Type> types;
     for (const auto& arg : function_call.args) {
         ExprCodeGen expr(jit);
         expr(arg);
@@ -2714,11 +3145,17 @@ void StmtCodeGen::codeGen(const FunctionCall& function_call) const {
         AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
         builder.CreateStore(name, str);
         auto result = *arg++;
-        auto type = static_cast<AbaciValue::Type>(result.second | AbaciValue::Constant);
+        Environment::DefineScope::Type type;
+        if (std::holds_alternative<AbaciValue::Type>(result.second)) {
+            type = static_cast<AbaciValue::Type>(std::get<AbaciValue::Type>(result.second) | AbaciValue::Constant); 
+        }
+        else {
+            type = result.second;
+        }
         environment->getCurrentDefineScope()->setType(parameter.get(), type);
         auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
         builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
-        builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), type), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+        builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(type)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
         Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
         Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
         builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), true) });
@@ -2730,7 +3167,7 @@ void StmtCodeGen::codeGen(const FunctionCall& function_call) const {
     builder.CreateStore(name, str);
     auto return_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
     builder.CreateStore(ConstantInt::get(builder.getInt64Ty(), 0), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), return_value, 0));
-    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), type), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), return_value, 1));
+    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(type)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), return_value, 1));
     builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), return_value, ConstantInt::get(builder.getInt1Ty(), true) });
     std::string function_name{ mangled(function_call.name, types) };
     builder.CreateCall(module.getFunction(function_name), {});
@@ -2752,7 +3189,7 @@ void StmtCodeGen::codeGen(const ReturnStmt& return_stmt) const {
     builder.CreateStore(name, str);
     auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
     builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
-    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), result.second & AbaciValue::TypeMask), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(result.second)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
     Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
     Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
     builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), false) });
@@ -2772,6 +3209,136 @@ void StmtCodeGen::codeGen([[maybe_unused]] const ExprFunction& expression_functi
 
 template<>
 void StmtCodeGen::codeGen([[maybe_unused]] const Class& class_template) const {
+}
+```
+
+The code for assigning to object data members begins by looking up the class name and creating an array of indices to the desired member. Then the value being assigned is evaluated and a call to `setObjectData()` is made.
+
+```cpp
+template<>
+void StmtCodeGen::codeGen(const DataAssignStmt& data_assign) const {
+    if (!environment->getCurrentDefineScope()->isDefined(data_assign.name.get())) {
+        UnexpectedError("No such object.");
+    }
+    Constant *name = ConstantDataArray::getString(module.getContext(), data_assign.name.get().c_str());
+    AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
+    builder.CreateStore(name, str);
+    std::vector<int> indices;
+    auto type = environment->getCurrentDefineScope()->getType(data_assign.name.get());
+    for (const auto& member : data_assign.member_list) {
+        if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
+            UnexpectedError("Not an object.")
+        }
+        auto object = std::get<Environment::DefineScope::Object>(type);
+        indices.push_back(jit.getCache()->getMemberIndex(jit.getCache()->getClass(object.class_name), member));
+        type = object.object_types.at(indices.back());
+    }
+    indices.push_back(-1);
+    ArrayType *array_type = ArrayType::get(builder.getInt32Ty(), indices.size());
+    Value *indices_array = builder.CreateAlloca(array_type);
+    for (int i = 0; auto idx : indices) {
+        Value *element_ptr = builder.CreateGEP(array_type, indices_array, { builder.getInt32(0), builder.getInt32(i) });
+        builder.CreateStore(builder.getInt32(idx), element_ptr);
+        ++i;
+    }
+    Value *indices_ptr = builder.CreateGEP(array_type, indices_array, { builder.getInt32(0), builder.getInt32(0) });
+    ExprCodeGen expr(jit);
+    expr(data_assign.value);
+    auto result = expr.get();
+    if (!(type == result.second)) {
+        UnexpectedError("Cannot assign to member with different type.")
+    }
+    auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
+    builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
+    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(result.second)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+    Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
+    Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
+    builder.CreateCall(module.getFunction("setObjectData"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), indices_ptr, abaci_value });
+}
+```
+
+Method calls which do not use the return value are near-identical to the logic seen in `ExprCodeGen.cpp`.
+
+```cpp
+template<>
+void StmtCodeGen::codeGen(const MethodCall& method_call) const {
+    Constant *object_name = ConstantDataArray::getString(module.getContext(), method_call.name.get().c_str());
+    AllocaInst *object_str = builder.CreateAlloca(object_name->getType(), nullptr);
+    builder.CreateStore(object_name, object_str);
+    std::vector<int> indices;
+    auto object_type = environment->getCurrentDefineScope()->getType(method_call.name.get());
+    for (const auto& member : method_call.member_list) {
+        if (!std::holds_alternative<Environment::DefineScope::Object>(object_type)) {
+            UnexpectedError("Not an object.")
+        }
+        auto object = std::get<Environment::DefineScope::Object>(object_type);
+        indices.push_back(jit.getCache()->getMemberIndex(jit.getCache()->getClass(object.class_name), member));
+        object_type = object.object_types.at(indices.back());
+    }
+    indices.push_back(-1);
+    ArrayType *array_type = ArrayType::get(builder.getInt32Ty(), indices.size());
+    Value *indices_array = builder.CreateAlloca(array_type);
+    for (int i = 0; auto idx : indices) {
+        Value *element_ptr = builder.CreateGEP(array_type, indices_array, { builder.getInt32(0), builder.getInt32(i) });
+        builder.CreateStore(builder.getInt32(idx), element_ptr);
+        ++i;
+    }
+    Value *indices_ptr = builder.CreateGEP(array_type, indices_array, { builder.getInt32(0), builder.getInt32(0) });
+    Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
+    Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
+    auto data_value = builder.CreateCall(module.getFunction("getObjectData"), { typed_environment_ptr, builder.CreateBitCast(object_str, builder.getInt8PtrTy()), indices_ptr });
+    builder.CreateCall(module.getFunction("setThisPtr"), { typed_environment_ptr, data_value });
+    std::string function_name = std::get<Environment::DefineScope::Object>(object_type).class_name + '.' + method_call.method;
+    const auto& cache_function = jit.getCache()->getFunction(function_name);
+    std::vector<StackType> arguments;
+    std::vector<Environment::DefineScope::Type> types;
+    for (const auto& arg : method_call.args) {
+        ExprCodeGen expr(jit);
+        expr(arg);
+        arguments.push_back(expr.get());
+        types.push_back(arguments.back().second);
+    }
+    environment->beginDefineScope();
+    builder.CreateCall(module.getFunction("beginScope"), { typed_environment_ptr });
+    for (auto arg = arguments.begin(); const auto& parameter : cache_function.parameters) {
+        Constant *name = ConstantDataArray::getString(module.getContext(), parameter.get().c_str());
+        AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
+        builder.CreateStore(name, str);
+        auto result = *arg++;
+        Environment::DefineScope::Type type;
+        if (std::holds_alternative<AbaciValue::Type>(result.second)) {
+            type = static_cast<AbaciValue::Type>(std::get<AbaciValue::Type>(result.second) | AbaciValue::Constant); 
+        }
+        else {
+            type = result.second;
+        }
+        environment->getCurrentDefineScope()->setType(parameter.get(), type);
+        auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
+        builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
+        builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(type)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+        builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), true) });
+    }
+    auto type = jit.getCache()->getFunctionInstantiationType(function_name, types);
+    environment->getCurrentDefineScope()->setType("_return", type);
+    Constant *name = ConstantDataArray::getString(module.getContext(), "_return");
+    AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
+    builder.CreateStore(name, str);
+    auto return_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
+    builder.CreateStore(ConstantInt::get(builder.getInt64Ty(), 0), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), return_value, 0));
+    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(type)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), return_value, 1));
+    builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), return_value, ConstantInt::get(builder.getInt1Ty(), true) });
+    builder.CreateCall(module.getFunction(mangled(function_name, types)), {});
+    builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
+    builder.CreateCall(module.getFunction("unsetThisPtr"), { typed_environment_ptr });
+    environment->endDefineScope();
+}
+```
+
+The `ExpressionStmt` class only exists in order to catch expressions being erroneously used in statement context, and is empty for `StmtCodeGen`.
+
+```cpp
+template<>
+void StmtCodeGen::codeGen([[maybe_unused]] const ExpressionStmt& expression_stmt) const {
 }
 ```
 
@@ -2819,6 +3386,15 @@ void StmtCodeGen::operator()(const StmtNode& stmt) const {
     else if (dynamic_cast<const Class*>(stmt_data)) {
         codeGen(dynamic_cast<const Class&>(*stmt_data));
     }
+    else if (dynamic_cast<const DataAssignStmt*>(stmt_data)) {
+        codeGen(dynamic_cast<const DataAssignStmt&>(*stmt_data));
+    }
+    else if (dynamic_cast<const MethodCall*>(stmt_data)) {
+        codeGen(dynamic_cast<const MethodCall&>(*stmt_data));
+    }
+    else if (dynamic_cast<const ExpressionStmt*>(stmt_data)) {
+        codeGen(dynamic_cast<const ExpressionStmt&>(*stmt_data));
+    }
     else {
         UnexpectedError("Bad StmtNode type.");
     }
@@ -2840,17 +3416,29 @@ namespace abaci::codegen {
 The layout of `TypeEvalGen::operator()` exactly matches that for class `ExprCodeGen`.
 
 ```cpp
+using abaci::ast::DataAssignStmt;
+using abaci::ast::MethodCall;
+using abaci::ast::ExpressionStmt;
+using abaci::utility::Operator;
+
 void TypeEvalGen::operator()(const abaci::ast::ExprNode& node) const {
     switch (node.get().index()) {
         case ExprNode::ValueNode:
             push(std::get<AbaciValue>(node.get()).type);
             break;
-        case ExprNode::VariableNode:
-            push(static_cast<AbaciValue::Type>(environment->getCurrentDefineScope()->getType(std::get<Variable>(node.get()).get()) & AbaciValue::TypeMask));
+        case ExprNode::VariableNode: {
+            auto type = environment->getCurrentDefineScope()->getType(std::get<Variable>(node.get()).get());
+            if (std::holds_alternative<AbaciValue::Type>(type)) {
+                push(static_cast<AbaciValue::Type>(std::get<AbaciValue::Type>(type) & AbaciValue::TypeMask));
+            }
+            else {
+                push(type);
+            }
             break;
+        }
 ```
 
-A `CallNode` causes a scope switch to implement an instantiation using `addFunctionInstantiation()`, which may itself call `TypeEvalGen::operator()`. The head recursion thus implied means that the leaf functions are listed first ready for definition in correct order by `JIT::initialize()`.
+A `CallNode` of type `Cache::CacheFunction` causes a scope switch to implement an instantiation using `addFunctionInstantiation()`, which may itself call `TypeEvalGen::operator()`. The head recursion thus implied means that the leaf functions are listed first ready for definition in correct order by `JIT::initialize()`.
 
 ```cpp
         case ExprNode::CallNode: {
@@ -2858,7 +3446,7 @@ A `CallNode` causes a scope switch to implement an instantiation using `addFunct
             switch(cache->getCacheType(call.name)) {
                 case Cache::CacheFunction: {
                     const auto& cache_function = cache->getFunction(call.name);
-                    std::vector<AbaciValue::Type> types;
+                    std::vector<Environment::DefineScope::Type> types;
                     for (const auto& arg : call.args) {
                         TypeEvalGen expr(environment, cache);
                         expr(arg);
@@ -2867,7 +3455,10 @@ A `CallNode` causes a scope switch to implement an instantiation using `addFunct
                     auto current_scope = environment->getCurrentDefineScope();
                     environment->beginDefineScope(environment->getGlobalDefineScope());
                     for (auto arg_type = types.begin(); const auto& parameter : cache_function.parameters) {
-                        auto type = static_cast<AbaciValue::Type>(*arg_type++ | AbaciValue::Constant);
+                        auto type = *arg_type++;
+                        if (std::holds_alternative<AbaciValue::Type>(type)) {
+                            type = static_cast<AbaciValue::Type>(std::get<AbaciValue::Type>(type) | AbaciValue::Constant);
+                        }
                         environment->getCurrentDefineScope()->setType(parameter.get(), type);
                     }
                     cache->addFunctionInstantiation(call.name, types, environment);
@@ -2877,13 +3468,88 @@ A `CallNode` causes a scope switch to implement an instantiation using `addFunct
                     push(return_type);
                     break;
                 }
+```
+
+Type `Cache::CacheClass` needs to return the type of an object being instantiated from a class template, which is simply the list of types of its constructor values.
+
+```cpp
                 case Cache::CacheClass: {
-                    UnexpectedError("Instantiation of classes not yet implemented.");
+                    Environment::DefineScope::Object object;
+                    object.class_name = call.name;
+                    for (const auto& arg : call.args) {
+                        TypeEvalGen expr(environment, cache);
+                        expr(arg);
+                        object.object_types.push_back(expr.get());
+                    }
+                    push(object);
                     break;
                 }
                 default:
                     UnexpectedError("Not a function or class.");
             }
+            break;
+        }
+```
+
+A method call is evaluated to determine its object and return types, creating a function instantiation based on the class and method names in the process.
+
+```cpp
+        case ExprNode::MethodNode: {
+            const auto& method_call = std::get<MethodValueCall>(node.get());
+            if (!environment->getCurrentDefineScope()->isDefined(method_call.name.get())) {
+                LogicError("No such object.");
+            }
+            auto type = environment->getCurrentDefineScope()->getType(method_call.name.get());
+            for (const auto& member : method_call.member_list) {
+                if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
+                    LogicError("Not an object.")
+                }
+                auto object = std::get<Environment::DefineScope::Object>(type);
+                auto idx = cache->getMemberIndex(cache->getClass(object.class_name), member);
+                type = object.object_types.at(idx);
+            }
+            std::string function_name = std::get<Environment::DefineScope::Object>(type).class_name + '.' + method_call.method;
+            const auto& cache_function = cache->getFunction(function_name);
+            std::vector<Environment::DefineScope::Type> types;
+            for (const auto& arg : method_call.args) {
+                TypeEvalGen expr(environment, cache);
+                expr(arg);
+                types.push_back(expr.get());
+            }
+            auto current_scope = environment->getCurrentDefineScope();
+            environment->beginDefineScope(environment->getGlobalDefineScope());
+            environment->getCurrentDefineScope()->setType(THIS, type);
+            for (auto arg_type = types.begin(); const auto& parameter : cache_function.parameters) {
+                auto type = *arg_type++;
+                if (std::holds_alternative<AbaciValue::Type>(type)) {
+                    type = static_cast<AbaciValue::Type>(std::get<AbaciValue::Type>(type) | AbaciValue::Constant);
+                }
+                environment->getCurrentDefineScope()->setType(parameter.get(), type);
+            }
+            cache->addFunctionInstantiation(function_name, types, environment);
+            auto return_type = cache->getFunctionInstantiationType(function_name, types);
+            environment->getCurrentDefineScope()->setType("_return", return_type);
+            environment->setCurrentDefineScope(current_scope);
+            push(return_type);
+            break;
+        }
+```
+
+Access to data members inspects the instantiation type for the object and returns the type of the specific data member.
+
+```cpp
+        case ExprNode::DataNode: {
+            const auto& data = std::get<DataCall>(node.get());
+            auto type = environment->getCurrentDefineScope()->getType(data.name.get());
+            for (const auto& member : data.member_list) {
+                if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
+                    LogicError("Not an object.")
+                }
+                auto object = std::get<Environment::DefineScope::Object>(type);
+                auto idx = cache->getMemberIndex(cache->getClass(object.class_name), member);
+                type = object.object_types.at(idx);
+            }
+            push(type);
             break;
         }
 ```
@@ -2900,10 +3566,11 @@ Implicit promotions based upon `Operator` types are handled for `ListNode`.
                     for (auto iter = ++expr.begin(); iter != expr.end();) {
                         auto op = std::get<Operator>(iter++->get());
                         (*this)(*iter++);
-                        type = promote(type, pop());
-                        if (type == AbaciValue::Integer && op == Operator::Divide) {
-                            type = AbaciValue::Float;
+                        auto new_type = promote(type, pop());
+                        if (new_type == AbaciValue::Integer && op == Operator::Divide) {
+                            new_type = AbaciValue::Float;
                         }
+                        type = new_type;
                     }
                     push(type);
                     break;
@@ -2958,7 +3625,11 @@ Implicit promotions based upon `Operator` types are handled for `ListNode`.
 A simplified `promote()` produces the same results as for `ExprCodeGen::promote()`, with the addition of type `Unset` for either parameter being returned as the binary operator type.
 
 ```cpp
-AbaciValue::Type TypeEvalGen::promote(AbaciValue::Type a, AbaciValue::Type b) const {
+AbaciValue::Type TypeEvalGen::promote(Environment::DefineScope::Type type_a, Environment::DefineScope::Type type_b) const {
+    if (!std::holds_alternative<AbaciValue::Type>(type_a) || !std::holds_alternative<AbaciValue::Type>(type_b)) {
+        LogicError("Bad type(s) for operator.")
+    }
+    auto a = std::get<AbaciValue::Type>(type_a), b = std::get<AbaciValue::Type>(type_b);
     if (a == b) {
         return a;
     }
@@ -3022,23 +3693,36 @@ void TypeCodeGen::codeGen(const InitStmt& define) const {
     TypeEvalGen expr(environment, cache);
     expr(define.value);
     auto result = expr.get();
-    auto type = static_cast<AbaciValue::Type>(result | ((define.assign == Operator::Equal) ? AbaciValue::Constant : 0));
-    environment->getCurrentDefineScope()->setType(define.name.get(), type);
+    if (std::holds_alternative<AbaciValue::Type>(result) && define.assign == Operator::Equal) {
+        result = static_cast<AbaciValue::Type>(std::get<AbaciValue::Type>(result) | AbaciValue::Constant); 
+    }
+    environment->getCurrentDefineScope()->setType(define.name.get(), result);
 }
 
 template<>
 void TypeCodeGen::codeGen(const AssignStmt& assign) const {
     if (!environment->getCurrentDefineScope()->isDefined(assign.name.get())) {
-        UnexpectedError("No such variable.");
+        LogicError("No such variable.");
     }
-    else if (environment->getCurrentDefineScope()->getType(assign.name.get()) & AbaciValue::Constant) {
-        UnexpectedError("Cannot assign to constant.");
+    else if (std::holds_alternative<AbaciValue::Type>(environment->getCurrentDefineScope()->getType(assign.name.get()))
+        && (std::get<AbaciValue::Type>(environment->getCurrentDefineScope()->getType(assign.name.get())) & AbaciValue::Constant)) {
+        LogicError("Cannot assign to constant.");
     }
     TypeEvalGen expr(environment, cache);
     expr(assign.value);
-    auto result = expr.get();
-    if (environment->getCurrentDefineScope()->getType(assign.name.get()) != result) {
-        UnexpectedError("Cannot assign to variable with different type.");
+    auto result = expr.get(), existing_type = environment->getCurrentDefineScope()->getType(assign.name.get());
+    if (std::holds_alternative<AbaciValue::Type>(result) && std::holds_alternative<AbaciValue::Type>(existing_type)) {
+        if (std::get<AbaciValue::Type>(result) != std::get<AbaciValue::Type>(existing_type)) {
+            LogicError("Cannot assign to variable with different type.");
+        }
+    }
+    else if (std::holds_alternative<Environment::DefineScope::Object>(result)
+        && std::holds_alternative<Environment::DefineScope::Object>(existing_type)) {
+        if ((std::get<Environment::DefineScope::Object>(result).class_name
+            != std::get<Environment::DefineScope::Object>(existing_type).class_name)
+            || !(result == existing_type)) {
+            LogicError("Cannot assign to object of different type.");
+        }
     }
 }
 
@@ -3092,6 +3776,9 @@ The specialization for `Function` performs the simple but important step of addi
 ```cpp
 template<>
 void TypeCodeGen::codeGen(const Function& function) const {
+    if (environment->getCurrentDefineScope()->getEnclosing()) {
+        LogicError("Functions must be defined at top-level.");
+    }
     cache->addFunctionTemplate(function.name, function.parameters, function.function_body);
 }
 ```
@@ -3102,7 +3789,7 @@ The code for `FunctionCall` is similar to that for handling `ValueCall` in class
 template<>
 void TypeCodeGen::codeGen(const FunctionCall& function_call) const {
     const auto& cache_function = cache->getFunction(function_call.name);
-    std::vector<AbaciValue::Type> types;
+    std::vector<Environment::DefineScope::Type> types;
     for (const auto& arg : function_call.args) {
         TypeEvalGen expr(environment, cache);
         expr(arg);
@@ -3111,7 +3798,10 @@ void TypeCodeGen::codeGen(const FunctionCall& function_call) const {
     auto current_scope = environment->getCurrentDefineScope();
     environment->beginDefineScope(environment->getGlobalDefineScope());
     for (auto arg_type = types.begin(); const auto& parameter : cache_function.parameters) {
-        auto type = static_cast<AbaciValue::Type>(*arg_type++ | AbaciValue::Constant);
+        auto type = *arg_type++;
+        if (std::holds_alternative<AbaciValue::Type>(type)) {
+            type = static_cast<AbaciValue::Type>(std::get<AbaciValue::Type>(type) | AbaciValue::Constant);
+        }
         environment->getCurrentDefineScope()->setType(parameter.get(), type);
     }
     cache->addFunctionInstantiation(function_call.name, types, environment);
@@ -3132,9 +3822,11 @@ void TypeCodeGen::codeGen(const ReturnStmt& return_stmt) const {
     TypeEvalGen expr(environment, cache);
     expr(return_stmt.expression);
     auto result = expr.get();
-    if (result != AbaciValue::Unset) {
-        if (type_is_set && return_type != result) {
-            UnexpectedError("Function return type already set to different type.");
+    if (!std::holds_alternative<AbaciValue::Type>(result)
+        || (std::holds_alternative<AbaciValue::Type>(result) &&
+            (std::get<AbaciValue::Type>(result) != AbaciValue::Unset))) {
+        if (type_is_set && !(result == return_type)) {
+            LogicError("Function return type already set to different type.");
         }
         return_type = result;
         type_is_set = true;
@@ -3167,6 +3859,83 @@ void TypeCodeGen::codeGen(const Class& class_template) const {
         cache->addFunctionTemplate(class_template.name + '.' + method.name, method.parameters, method.function_body);
     }
     cache->addClassTemplate(class_template.name, class_template.variables, method_names);
+}
+```
+
+Data member assignment is verified by looking up the object type and ensuring that the assignment expression and member types match.
+
+```cpp
+template<>
+void TypeCodeGen::codeGen(const DataAssignStmt& data_assign) const {
+    if (!environment->getCurrentDefineScope()->isDefined(data_assign.name.get())) {
+        LogicError("No such object.");
+    }
+    auto type = environment->getCurrentDefineScope()->getType(data_assign.name.get());
+    for (const auto& member : data_assign.member_list) {
+        if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
+            LogicError("Not an object.")
+        }
+        auto object = std::get<Environment::DefineScope::Object>(type);
+        auto idx = cache->getMemberIndex(cache->getClass(object.class_name), member);
+        type = object.object_types.at(idx);
+    }
+    TypeEvalGen expr(environment, cache);
+    expr(data_assign.value);
+    auto result = expr.get();
+    if (!(result == type)) {
+        LogicError("Cannot assign to member with different type.")
+    }
+}
+```
+
+Method calls are evaluated as for class `TypeEvalGen`.
+
+```cpp
+template<>
+void TypeCodeGen::codeGen(const MethodCall& method_call) const {
+    if (!environment->getCurrentDefineScope()->isDefined(method_call.name.get())) {
+        LogicError("No such object.");
+    }
+    auto type = environment->getCurrentDefineScope()->getType(method_call.name.get());
+    for (const auto& member : method_call.member_list) {
+        if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
+            LogicError("Not an object.")
+        }
+        auto object = std::get<Environment::DefineScope::Object>(type);
+        auto idx = cache->getMemberIndex(cache->getClass(object.class_name), member);
+        type = object.object_types.at(idx);
+    }
+    std::string function_name = std::get<Environment::DefineScope::Object>(type).class_name + '.' + method_call.method;
+    const auto& cache_function = cache->getFunction(function_name);
+    std::vector<Environment::DefineScope::Type> types;
+    for (const auto& arg : method_call.args) {
+        TypeEvalGen expr(environment, cache);
+        expr(arg);
+        types.push_back(expr.get());
+    }
+    auto current_scope = environment->getCurrentDefineScope();
+    environment->beginDefineScope(environment->getGlobalDefineScope());
+    environment->getCurrentDefineScope()->setType(THIS, type);
+    for (auto arg_type = types.begin(); const auto& parameter : cache_function.parameters) {
+        auto type = *arg_type++;
+        if (std::holds_alternative<AbaciValue::Type>(type)) {
+            type = static_cast<AbaciValue::Type>(std::get<AbaciValue::Type>(type) | AbaciValue::Constant);
+        }
+        environment->getCurrentDefineScope()->setType(parameter.get(), type);
+    }
+    cache->addFunctionInstantiation(function_name, types, environment);
+    auto return_type = cache->getFunctionInstantiationType(function_name, types);
+    environment->getCurrentDefineScope()->setType("_return", return_type);
+    environment->setCurrentDefineScope(current_scope);
+}
+```
+
+Expressions in statement context cause an error to be generated.
+
+```cpp
+template<>
+void TypeCodeGen::codeGen([[maybe_unused]] const ExpressionStmt& expression_stmt) const {
+    LogicError("Expression not permitted in this context.")
 }
 ```
 
@@ -3214,6 +3983,15 @@ void TypeCodeGen::operator()(const StmtNode& stmt) const {
     else if (dynamic_cast<const Class*>(stmt_data)) {
         codeGen(dynamic_cast<const Class&>(*stmt_data));
     }
+    else if (dynamic_cast<const DataAssignStmt*>(stmt_data)) {
+        codeGen(dynamic_cast<const DataAssignStmt&>(*stmt_data));
+    }
+    else if (dynamic_cast<const MethodCall*>(stmt_data)) {
+        codeGen(dynamic_cast<const MethodCall&>(*stmt_data));
+    }
+    else if (dynamic_cast<const ExpressionStmt*>(stmt_data)) {
+        codeGen(dynamic_cast<const ExpressionStmt&>(*stmt_data));
+    }
     else {
         UnexpectedError("Bad StmtNode type.");
     }
@@ -3252,20 +4030,21 @@ public:
     };
     struct Instantiation {
         std::string name;
-        std::vector<AbaciValue::Type> parameter_types;
-        AbaciValue::Type return_type;
+        std::vector<Environment::DefineScope::Type> parameter_types;
+        Environment::DefineScope::Type return_type;
         std::shared_ptr<Environment::DefineScope> scope;
     };
     enum Type{ CacheClass, CacheFunction, CacheNone };
     Cache() = default;
     void addClassTemplate(const std::string& name, const std::vector<Variable>& variables, const std::vector<std::string>& methods);
     void addFunctionTemplate(const std::string& name, const std::vector<Variable>& parameters, const StmtList& body);
-    void addFunctionInstantiation(const std::string& name, const std::vector<AbaciValue::Type>& types, Environment *environment);
-    AbaciValue::Type getFunctionInstantiationType(const std::string& name, const std::vector<AbaciValue::Type>& types) const;
-    std::shared_ptr<Environment::DefineScope> getFunctionInstantiationScope(const std::string& name, const std::vector<AbaciValue::Type>& types) const;
+    void addFunctionInstantiation(const std::string& name, const std::vector<Environment::DefineScope::Type>& types, Environment *environment);
+    Environment::DefineScope::Type getFunctionInstantiationType(const std::string& name, const std::vector<Environment::DefineScope::Type>& types) const;
+    std::shared_ptr<Environment::DefineScope> getFunctionInstantiationScope(const std::string& name, const std::vector<Environment::DefineScope::Type>& types) const;
     Type getCacheType(const std::string& name) const;
     const Function& getFunction(const std::string& name) const;
     const Class& getClass(const std::string& name) const;
+    unsigned getMemberIndex(const Class& cache_class, const Variable& member) const;
     const auto& getInstantiations() const { return instantiations; }
     void clearInstantiations() { instantiations.clear(); }
 private:
@@ -3310,7 +4089,7 @@ void Cache::addFunctionTemplate(const std::string& name, const std::vector<Varia
 Function `addFunctionInstantiation()` is called with a function name, actual parameter types and and `Environment*`, creating a temporary `Unset` instantiation record if the mangled name does not match any already present. A return type value is obtained by calling `TypeCodeGen::operator(StmtList&)`, and the instantiation record is then updated.
 
 ```cpp
-void Cache::addFunctionInstantiation(const std::string& name, const std::vector<AbaciValue::Type>& types, Environment *environment) {
+void Cache::addFunctionInstantiation(const std::string& name, const std::vector<Environment::DefineScope::Type>& types, Environment *environment) {
     auto iter = functions.find(name);
     if (iter != functions.end()) {
         if (types.size() == iter->second.parameters.size()) {
@@ -3349,7 +4128,7 @@ void Cache::addFunctionInstantiation(const std::string& name, const std::vector<
 The "getters" for this class allow reading from the cache containers.
 
 ```cpp
-AbaciValue::Type Cache::getFunctionInstantiationType(const std::string& name, const std::vector<AbaciValue::Type>& types) const {
+Environment::DefineScope::Type Cache::getFunctionInstantiationType(const std::string& name, const std::vector<Environment::DefineScope::Type>& types) const {
     auto mangled_name = mangled(name, types);
     for (const auto& instantiation : instantiations) {
         if (mangled_name == mangled(instantiation.name, instantiation.parameter_types)) {
@@ -3359,7 +4138,7 @@ AbaciValue::Type Cache::getFunctionInstantiationType(const std::string& name, co
     UnexpectedError("No such function instantiation.");
 }
 
-std::shared_ptr<Environment::DefineScope> Cache::getFunctionInstantiationScope(const std::string& name, const std::vector<AbaciValue::Type>& types) const {
+std::shared_ptr<Environment::DefineScope> Cache::getFunctionInstantiationScope(const std::string& name, const std::vector<Environment::DefineScope::Type>& types) const {
     auto mangled_name = mangled(name, types);
     for (const auto& instantiation : instantiations) {
         if (mangled_name == mangled(instantiation.name, instantiation.parameter_types)) {
@@ -3383,6 +4162,14 @@ const Cache::Class& Cache::getClass(const std::string& name) const {
         return iter->second;
     }
     UnexpectedError("No such class.");
+}
+
+unsigned Cache::getMemberIndex(const Class& cache_class, const Variable& member) const {
+    auto iter = std::find(cache_class.variables.begin(), cache_class.variables.end(), member);
+    if (iter != cache_class.variables.end()) {
+        return iter - cache_class.variables.begin();
+    }
+    LogicError("No such member variable.")
 }
 
 Cache::Type Cache::getCacheType(const std::string& name) const {
@@ -3485,18 +4272,20 @@ void JIT::initialize() {
     Function::Create(pow_func_type, Function::ExternalLinkage, "pow", module.get());
     FunctionType *strcmp_func_type = FunctionType::get(builder.getInt32Ty(), { builder.getInt8PtrTy(), builder.getInt8PtrTy() }, false);
     Function::Create(strcmp_func_type, Function::ExternalLinkage, "strcmp", module.get());
+    StructType *abaci_value_type = StructType::create(*context, "struct.AbaciValue");
+    auto union_type = Type::getInt64Ty(*context); 
+    auto enum_type = Type::getInt32Ty(*context);
+    abaci_value_type->setBody({ union_type, enum_type });
     StructType *complex_type = StructType::create(*context, "struct.Complex");
     complex_type->setBody({ Type::getDoubleTy(*context), Type::getDoubleTy(*context) });
     StructType *string_type = StructType::create(*context, "struct.String");
     string_type->setBody({ Type::getInt8PtrTy(*context), Type::getInt64Ty(*context) });
-    FunctionType *dummy_type = FunctionType::get(builder.getVoidTy(), { PointerType::get(string_type, 0) }, false);
-    Function::Create(dummy_type, Function::ExternalLinkage, "stringFunc", module.get());
-    auto union_type = Type::getInt64Ty(*context); 
-    auto enum_type = Type::getInt32Ty(*context);
+    StructType *object_type = StructType::create(*context, "struct.Object");
+    object_type->setBody({ Type::getInt8PtrTy(*context), Type::getInt64Ty(*context), PointerType::get(abaci_value_type, 0) });
+    FunctionType *dummy_type = FunctionType::get(builder.getVoidTy(), { PointerType::get(string_type, 0), PointerType::get(object_type, 0) }, false);
+    Function::Create(dummy_type, Function::ExternalLinkage, "stringObjectFunc", module.get());
     FunctionType *complex_math_type = FunctionType::get(builder.getVoidTy(), { PointerType::get(complex_type, 0), builder.getInt32Ty(), PointerType::get(complex_type, 0), PointerType::get(complex_type, 0) }, false);
     Function::Create(complex_math_type, Function::ExternalLinkage, "complexMath", module.get());
-    StructType *abaci_value_type = StructType::create(*context, "struct.AbaciValue");
-    abaci_value_type->setBody({ union_type, enum_type });
     StructType *environment_type = StructType::create(*context, "struct.Environment");
     FunctionType *print_value_type = FunctionType::get(builder.getVoidTy(), { PointerType::get(abaci_value_type, 0) }, false);
     Function::Create(print_value_type, Function::ExternalLinkage, "printValue", module.get());
@@ -3508,10 +4297,18 @@ void JIT::initialize() {
     Function::Create(set_variable_type, Function::ExternalLinkage, "setVariable", module.get());
     FunctionType *get_variable_type = FunctionType::get(PointerType::get(abaci_value_type, 0), { PointerType::get(environment_type, 0), builder.getInt8PtrTy() }, false);
     Function::Create(get_variable_type, Function::ExternalLinkage, "getVariable", module.get());
+    FunctionType *set_object_data_type = FunctionType::get(builder.getVoidTy(), { PointerType::get(environment_type, 0), builder.getInt8PtrTy(), PointerType::get(builder.getInt32Ty(), 0), PointerType::get(abaci_value_type, 0) }, false);
+    Function::Create(set_object_data_type, Function::ExternalLinkage, "setObjectData", module.get());
+    FunctionType *get_object_data_type = FunctionType::get(PointerType::get(abaci_value_type, 0), { PointerType::get(environment_type, 0), builder.getInt8PtrTy(), PointerType::get(builder.getInt32Ty(), 0) }, false);
+    Function::Create(get_object_data_type, Function::ExternalLinkage, "getObjectData", module.get());
     FunctionType *begin_scope_type = FunctionType::get(builder.getVoidTy(), { PointerType::get(environment_type, 0) }, false);
     Function::Create(begin_scope_type, Function::ExternalLinkage, "beginScope", module.get());
     FunctionType *end_scope_type = FunctionType::get(builder.getVoidTy(), { PointerType::get(environment_type, 0) }, false);
     Function::Create(end_scope_type, Function::ExternalLinkage, "endScope", module.get());
+    FunctionType *set_this_ptr_type = FunctionType::get(builder.getVoidTy(), { PointerType::get(environment_type, 0), PointerType::get(abaci_value_type, 0) }, false);
+    Function::Create(set_this_ptr_type, Function::ExternalLinkage, "setThisPtr", module.get());
+    FunctionType *unset_this_ptr_type = FunctionType::get(builder.getVoidTy(), { PointerType::get(environment_type, 0) }, false);
+    Function::Create(unset_this_ptr_type, Function::ExternalLinkage, "unsetThisPtr", module.get());
     for (const auto& instantiation : cache->getInstantiations()) {
         std::string function_name{ mangled(instantiation.name, instantiation.parameter_types) };
         FunctionType *inst_func_type = FunctionType::get(builder.getVoidTy(), {}, false);
@@ -3565,7 +4362,7 @@ ExecFunctionType JIT::getExecFunction() {
         UnexpectedError("Failed add IR module");
     }
     if (auto err = (*jit)->getMainJITDylib().define(
-            llvm::orc::absoluteSymbols({{(*jit)->getExecutionSession().intern("pow"), { reinterpret_cast<uintptr_t>(&pow), JITSymbolFlags::Exported }},
+            absoluteSymbols({{(*jit)->getExecutionSession().intern("pow"), { reinterpret_cast<uintptr_t>(&pow), JITSymbolFlags::Exported }},
             {(*jit)->getExecutionSession().intern("strcmp"), { reinterpret_cast<uintptr_t>(&strcmp), JITSymbolFlags::Exported }},
             {(*jit)->getExecutionSession().intern("memcpy"), { reinterpret_cast<uintptr_t>(&memcpy), JITSymbolFlags::Exported }},
             {(*jit)->getExecutionSession().intern("complexMath"), { reinterpret_cast<uintptr_t>(&complexMath), JITSymbolFlags::Exported }},
@@ -3574,8 +4371,12 @@ ExecFunctionType JIT::getExecFunction() {
             {(*jit)->getExecutionSession().intern("printLn"), { reinterpret_cast<uintptr_t>(&printLn), JITSymbolFlags::Exported }},
             {(*jit)->getExecutionSession().intern("setVariable"), { reinterpret_cast<uintptr_t>(&setVariable), JITSymbolFlags::Exported }},
             {(*jit)->getExecutionSession().intern("getVariable"), { reinterpret_cast<uintptr_t>(&getVariable), JITSymbolFlags::Exported }},
+            {(*jit)->getExecutionSession().intern("setObjectData"), { reinterpret_cast<uintptr_t>(&setObjectData), JITSymbolFlags::Exported }},
+            {(*jit)->getExecutionSession().intern("getObjectData"), { reinterpret_cast<uintptr_t>(&getObjectData), JITSymbolFlags::Exported }},
             {(*jit)->getExecutionSession().intern("beginScope"), { reinterpret_cast<uintptr_t>(&beginScope), JITSymbolFlags::Exported }},
-            {(*jit)->getExecutionSession().intern("endScope"), { reinterpret_cast<uintptr_t>(&endScope), JITSymbolFlags::Exported }}
+            {(*jit)->getExecutionSession().intern("endScope"), { reinterpret_cast<uintptr_t>(&endScope), JITSymbolFlags::Exported }},
+            {(*jit)->getExecutionSession().intern("setThisPtr"), { reinterpret_cast<uintptr_t>(&setThisPtr), JITSymbolFlags::Exported }},
+            {(*jit)->getExecutionSession().intern("unsetThisPtr"), { reinterpret_cast<uintptr_t>(&unsetThisPtr), JITSymbolFlags::Exported }}
             }))) {
         handleAllErrors(std::move(err), [&](ErrorInfoBase& eib) {
             errs() << "Error: " << eib.message() << '\n';
@@ -3601,7 +4402,7 @@ The main program contained in this file is not intended to be fully-featured, bu
 In the case of a single program argument (`./abaci0 script.abaci`), this file is read in one go before `ast`, `environment` and `functions` are created (as empty). The call to `parse_block()` returns `true` if successful, causing use of class `TypeCodeGen` over the whole program. If no errors are caused by this stage, `jit` and `code_gen` are created and the resulting `programFunc` is called before the main program exits. Syntax errors cause the message `"Could not parse file."`, while other errors would result in exceptions being thrown; if errors are caught, the main program exits with a non-zero failure code.
 
 ```cpp
-const std::string version = "0.8.9 (2024-Apr-25)";
+const std::string version = "0.9.0 (2024-May-09)";
 
 int main(const int argc, const char **argv) {
     if (argc == 2) {
@@ -3669,6 +4470,7 @@ Where the Abaci0 interpreter is run without arguments, a version string is outpu
                 }
                 catch (AbaciError& error) {
                     print(std::cout, "{}\n", error.what());
+                    environment.reset();
                 }
             }
             more_input = input;

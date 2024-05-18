@@ -50,6 +50,8 @@ Numerous things to add before a 1.0.0 release. Please raise issues or pull reque
 
 * **0.8.9** (2024-Apr-25) Factorial and Fibonacci functions now generate correct code, updates made to source manuscript.
 
+* **0.9.0** (2024-May-09) Dot selection for data members and methods, this pointer.
+
 ## License
 
 All writing and source code released under a Creative Commmons License, &copy;2023-24 Richard Spencer

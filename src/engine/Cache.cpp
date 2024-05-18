@@ -27,7 +27,7 @@ void Cache::addFunctionTemplate(const std::string& name, const std::vector<Varia
     }
 }
 
-void Cache::addFunctionInstantiation(const std::string& name, const std::vector<AbaciValue::Type>& types, Environment *environment) {
+void Cache::addFunctionInstantiation(const std::string& name, const std::vector<Environment::DefineScope::Type>& types, Environment *environment) {
     auto iter = functions.find(name);
     if (iter != functions.end()) {
         if (types.size() == iter->second.parameters.size()) {
@@ -62,7 +62,7 @@ void Cache::addFunctionInstantiation(const std::string& name, const std::vector<
     }
 }
 
-AbaciValue::Type Cache::getFunctionInstantiationType(const std::string& name, const std::vector<AbaciValue::Type>& types) const {
+Environment::DefineScope::Type Cache::getFunctionInstantiationType(const std::string& name, const std::vector<Environment::DefineScope::Type>& types) const {
     auto mangled_name = mangled(name, types);
     for (const auto& instantiation : instantiations) {
         if (mangled_name == mangled(instantiation.name, instantiation.parameter_types)) {
@@ -72,7 +72,7 @@ AbaciValue::Type Cache::getFunctionInstantiationType(const std::string& name, co
     UnexpectedError("No such function instantiation.");
 }
 
-std::shared_ptr<Environment::DefineScope> Cache::getFunctionInstantiationScope(const std::string& name, const std::vector<AbaciValue::Type>& types) const {
+std::shared_ptr<Environment::DefineScope> Cache::getFunctionInstantiationScope(const std::string& name, const std::vector<Environment::DefineScope::Type>& types) const {
     auto mangled_name = mangled(name, types);
     for (const auto& instantiation : instantiations) {
         if (mangled_name == mangled(instantiation.name, instantiation.parameter_types)) {
@@ -96,6 +96,14 @@ const Cache::Class& Cache::getClass(const std::string& name) const {
         return iter->second;
     }
     UnexpectedError("No such class.");
+}
+
+unsigned Cache::getMemberIndex(const Class& cache_class, const Variable& member) const {
+    auto iter = std::find(cache_class.variables.begin(), cache_class.variables.end(), member);
+    if (iter != cache_class.variables.end()) {
+        return iter - cache_class.variables.begin();
+    }
+    LogicError("No such member variable.")
 }
 
 Cache::Type Cache::getCacheType(const std::string& name) const {

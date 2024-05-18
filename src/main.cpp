@@ -12,7 +12,7 @@
 #include <string>
 using fmt::print;
 
-const std::string version = "0.8.9 (2024-Apr-25)";
+const std::string version = "0.9.0 (2024-May-09)";
 
 int main(const int argc, const char **argv) {
     if (argc == 2) {
@@ -75,6 +75,7 @@ int main(const int argc, const char **argv) {
                 }
                 catch (AbaciError& error) {
                     print(std::cout, "{}\n", error.what());
+                    environment.reset();
                 }
             }
             more_input = input;

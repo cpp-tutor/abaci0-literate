@@ -2,7 +2,7 @@
 #include "Report.hpp"
 #include "parser/Keywords.hpp"
 #include <iomanip>
-#include <charconv>
+#include <algorithm>
 
 namespace abaci::utility {
 
@@ -53,12 +53,22 @@ void AbaciValue::clone(const AbaciValue& rhs) {
             value.str = rhs.value.str ? new abaci::utility::String(rhs.value.str->ptr, rhs.value.str->len) : nullptr;
             break;
         case Object:
-            value.object = rhs.value.object ? new abaci::utility::Object{ rhs.value.object->variables, rhs.value.object->methods } : nullptr;
+            value.object = rhs.value.object ? new abaci::utility::Object(rhs.value.object->class_name, rhs.value.object->variables_sz, rhs.value.object->variables) : nullptr;
             break;
         default:
             break;
     }
     type = rhs.type;
+}
+
+Object::Object(const char8_t *s, std::size_t sz, AbaciValue *data) {
+    class_name = new char8_t[strlen(reinterpret_cast<const char*>(s)) + 1];
+    strcpy(reinterpret_cast<char*>(class_name), reinterpret_cast<const char*>(s));
+    variables_sz = sz;
+    variables = new AbaciValue[variables_sz];
+    for (std::size_t i = 0; i != variables_sz; ++i) {
+        variables[i] = AbaciValue(data[i]);
+    }
 }
 
 AbaciValue::~AbaciValue() {
@@ -80,37 +90,14 @@ AbaciValue::~AbaciValue() {
     }
 }
 
-std::string mangled(const std::string& name, const std::vector<AbaciValue::Type>& types) {
-    std::string function_name;
-    for (unsigned char ch : name) {
-        if (ch == '\'') {
-            function_name.push_back('.');
-        }
-        else if (ch >= 0x80) {
-            function_name.push_back('.');
-            char buffer[16];
-            auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer), static_cast<int>(ch), 16);
-            if (ec != std::errc()) {
-                UnexpectedError("Bad numeric conversion.");
-            }
-            *ptr = '\0';
-            function_name.append(buffer);
-        }
-        else {
-            function_name.push_back(ch);
-        }
+Object::~Object() {
+    for (std::size_t i = 0; i != variables_sz; ++i) {
+        variables[i].~AbaciValue();
     }
-    for (const auto parameter_type : types) {
-        function_name.push_back('.');
-        char buffer[16];
-        auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer), static_cast<int>(parameter_type), 10);
-        if (ec != std::errc()) {
-            UnexpectedError("Bad numeric conversion.");
-        }
-        *ptr = '\0';
-        function_name.append(buffer);
-    }
-    return function_name;
+    delete[] variables;
+    variables_sz = 0;
+    delete[] class_name;
+    class_name = nullptr;
 }
 
 } // namespace abaci::utility

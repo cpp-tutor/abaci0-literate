@@ -32,6 +32,14 @@ struct String {
     ~String() { delete[] ptr; ptr = nullptr; len = 0; }
 };
 
+struct Object {
+    char8_t *class_name;
+    std::size_t variables_sz;
+    AbaciValue *variables;
+    Object(const char8_t *s, std::size_t sz, AbaciValue *data);
+    ~Object();
+};
+
 class Variable {
     std::string name;
 public:
@@ -40,11 +48,7 @@ public:
     Variable& operator=(const Variable&) = default;
     Variable(const std::string& name) : name{ name } {}
     const auto& get() const { return name; }
-};
-
-struct Object {
-    std::vector<std::pair<Variable,AbaciValue>> variables;
-    std::vector<std::string> methods;
+    bool operator==(const Variable& rhs) const { return name == rhs.name; }
 };
 
 struct AbaciValue {
@@ -65,8 +69,9 @@ struct AbaciValue {
     explicit AbaciValue(double d) : type{ Float } { value.floating = d; }
     explicit AbaciValue(double real, double imag) : type{ Complex } { value.complex = new abaci::utility::Complex{ real, imag }; }
     explicit AbaciValue(const std::string& s) : type{ String } { value.str = new abaci::utility::String(s); }
+    explicit AbaciValue(const char8_t *s, std::size_t sz, AbaciValue *data) : type{ Object } { value.object = new abaci::utility::Object(s, sz, data); }
     AbaciValue(const AbaciValue& rhs) { clone(rhs); }
-    AbaciValue& operator=(const AbaciValue& rhs) { clone(rhs); return *this; }
+    AbaciValue& operator=(const AbaciValue& rhs) { this->~AbaciValue(); clone(rhs); return *this; }
     ~AbaciValue();
 private:
     void clone(const AbaciValue&);
@@ -80,8 +85,6 @@ enum class Operator { None, Plus, Minus, Times, Divide, Modulo, FloorDivide, Exp
     Comma, SemiColon, From, To };
 
 extern const std::unordered_map<std::string,Operator> Operators;
-
-std::string mangled(const std::string& name, const std::vector<AbaciValue::Type>& types);
 
 } // namespace abaci::utility
 

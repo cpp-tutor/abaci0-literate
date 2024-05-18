@@ -115,6 +115,24 @@ struct Class : StmtData {
     FunctionList methods;    
 };
 
+struct DataAssignStmt : StmtData {
+    Variable name;
+    std::vector<Variable> member_list;
+    Operator assign;
+    ExprNode value;
+};
+
+struct MethodCall : StmtData {
+    Variable name;
+    std::vector<Variable> member_list;
+    std::string method;
+    ExprList args;
+};
+
+struct ExpressionStmt : StmtData {
+    ExprNode expression;
+};
+
 } // namespace abaci::ast
 
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::CommentStmt, comment_string)
@@ -131,5 +149,8 @@ BOOST_FUSION_ADAPT_STRUCT(abaci::ast::FunctionCall, name, args)
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::ReturnStmt, expression)
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::ExprFunction, name, parameters, to, expression)
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::Class, name, variables, methods)
+BOOST_FUSION_ADAPT_STRUCT(abaci::ast::DataAssignStmt, name, member_list, assign, value)
+BOOST_FUSION_ADAPT_STRUCT(abaci::ast::MethodCall, name, member_list, method, args)
+BOOST_FUSION_ADAPT_STRUCT(abaci::ast::ExpressionStmt, expression)
 
 #endif

@@ -2,6 +2,7 @@
 #include "utility/Report.hpp"
 #include "parser/Keywords.hpp"
 #include <complex>
+#include <cstring>
 #include <fmt/core.h>
 #include <fmt/format.h>
 using fmt::print;
@@ -34,6 +35,9 @@ void printValue(AbaciValue *value) {
             break;
         case AbaciValue::String:
             fwrite(reinterpret_cast<const char*>(value->value.str->ptr), value->value.str->len, 1, stdout);
+            break;
+        case AbaciValue::Object:
+            print("<Instance of {}>", reinterpret_cast<const char*>(value->value.object->class_name));
             break;
         default:
             print("{}?", static_cast<int>(value->type));
@@ -95,10 +99,36 @@ AbaciValue *getVariable(Environment *environment, char *name) {
     return environment->getCurrentScope()->getValue(name);
 }
 
+void setObjectData(Environment *environment, char *name, int *indices, AbaciValue *value) {
+    auto data = (strcmp(name, THIS) == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
+    while (*indices != -1) {
+        data = &data->value.object->variables[*indices];
+        ++indices;
+    }
+    *data = *value;
+}
+
+AbaciValue *getObjectData(Environment *environment, char *name, int *indices) {
+    auto data = (strcmp(name, THIS) == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
+    while (*indices != -1) {
+        data = &data->value.object->variables[*indices];
+        ++indices;
+    }
+    return data;
+}
+
 void beginScope(Environment *environment) {
     environment->beginScope();
 }
 
 void endScope(Environment *environment) {
     environment->endScope();
+}
+
+void setThisPtr(Environment *environment, AbaciValue *ptr) {
+    environment->setThisPtr(ptr);
+}
+
+void unsetThisPtr(abaci::utility::Environment *environment) {
+    environment->unsetThisPtr();
 }

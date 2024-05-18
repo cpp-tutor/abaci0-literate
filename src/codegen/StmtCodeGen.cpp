@@ -1,5 +1,6 @@
 #include "CodeGen.hpp"
 #include "utility/Utility.hpp"
+#include "parser/Keywords.hpp"
 #include <llvm/IR/Constants.h>
 
 using namespace llvm;
@@ -27,6 +28,9 @@ using abaci::ast::FunctionCall;
 using abaci::ast::ReturnStmt;
 using abaci::ast::ExprFunction;
 using abaci::ast::Class;
+using abaci::ast::DataAssignStmt;
+using abaci::ast::MethodCall;
+using abaci::ast::ExpressionStmt;
 using abaci::utility::Operator;
 
 void StmtCodeGen::operator()(const StmtList& stmts, BasicBlock *exit_block) const {
@@ -69,7 +73,7 @@ void StmtCodeGen::codeGen(const PrintStmt& print) const {
                 auto result = expr.get();
                 auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
                 builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
-                builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), result.second), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+                builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(result.second)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
                 builder.CreateCall(module.getFunction("printValue"), { abaci_value });
                 break;
             }
@@ -109,13 +113,19 @@ void StmtCodeGen::codeGen(const InitStmt& define) const {
     ExprCodeGen expr(jit);
     expr(define.value);
     auto result = expr.get();
-    auto type = static_cast<AbaciValue::Type>(result.second | ((define.assign == Operator::Equal) ? AbaciValue::Constant : 0));
+    Environment::DefineScope::Type type;
+    if (std::holds_alternative<AbaciValue::Type>(result.second) && define.assign == Operator::Equal) {
+        type = static_cast<AbaciValue::Type>(std::get<AbaciValue::Type>(result.second) | AbaciValue::Constant); 
+    }
+    else {
+        type = result.second;
+    }
     if (environment->getCurrentDefineScope()->getEnclosing()) {
         environment->getCurrentDefineScope()->setType(define.name.get(), type);
     }
     auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
     builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
-    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), type), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(type)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
     Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
     Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
     builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), true) });
@@ -126,7 +136,8 @@ void StmtCodeGen::codeGen(const AssignStmt& assign) const {
     if (!environment->getCurrentDefineScope()->isDefined(assign.name.get())) {
         LogicError("No such variable.");
     }
-    else if (environment->getCurrentDefineScope()->getType(assign.name.get()) & AbaciValue::Constant) {
+    else if (auto type = environment->getCurrentDefineScope()->getType(assign.name.get());
+        std::holds_alternative<AbaciValue::Type>(type) && (std::get<AbaciValue::Type>(type) & AbaciValue::Constant)) {
         LogicError("Cannot assign to constant.");
     }
     Constant *name = ConstantDataArray::getString(module.getContext(), assign.name.get().c_str());
@@ -135,12 +146,12 @@ void StmtCodeGen::codeGen(const AssignStmt& assign) const {
     ExprCodeGen expr(jit);
     expr(assign.value);
     auto result = expr.get();
-    if (environment->getCurrentDefineScope()->getType(assign.name.get()) != result.second) {
+    if (!(environment->getCurrentDefineScope()->getType(assign.name.get()) == result.second)) {
         LogicError("Cannot assign to variable with different type.");
     }
     auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
     builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
-    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), result.second), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(result.second)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
     Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
     Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
     builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), false) });
@@ -152,7 +163,7 @@ void StmtCodeGen::codeGen(const IfStmt& if_stmt) const {
     expr(if_stmt.condition);
     auto result = expr.get();
     Value *condition;
-    if (result.second == AbaciValue::Boolean) {
+    if (environmentTypeToType(result.second) == AbaciValue::Boolean) {
         condition = result.first;
     }
     else {
@@ -184,7 +195,7 @@ void StmtCodeGen::codeGen(const WhileStmt& while_stmt) const {
     expr(while_stmt.condition);
     auto result = expr.get();
     Value *condition;
-    if (result.second == AbaciValue::Boolean) {
+    if (environmentTypeToType(result.second) == AbaciValue::Boolean) {
         condition = result.first;
     }
     else {
@@ -218,7 +229,7 @@ void StmtCodeGen::codeGen(const RepeatStmt& repeat_stmt) const {
     expr(repeat_stmt.condition);
     auto result = expr.get();
     Value *condition;
-    if (result.second == AbaciValue::Boolean) {
+    if (environmentTypeToType(result.second) == AbaciValue::Boolean) {
         condition = result.first;
     }
     else {
@@ -295,7 +306,7 @@ void StmtCodeGen::codeGen(const FunctionCall& function_call) const {
     Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
     Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
     std::vector<StackType> arguments;
-    std::vector<AbaciValue::Type> types;
+    std::vector<Environment::DefineScope::Type> types;
     for (const auto& arg : function_call.args) {
         ExprCodeGen expr(jit);
         expr(arg);
@@ -309,11 +320,17 @@ void StmtCodeGen::codeGen(const FunctionCall& function_call) const {
         AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
         builder.CreateStore(name, str);
         auto result = *arg++;
-        auto type = static_cast<AbaciValue::Type>(result.second | AbaciValue::Constant);
+        Environment::DefineScope::Type type;
+        if (std::holds_alternative<AbaciValue::Type>(result.second)) {
+            type = static_cast<AbaciValue::Type>(std::get<AbaciValue::Type>(result.second) | AbaciValue::Constant); 
+        }
+        else {
+            type = result.second;
+        }
         environment->getCurrentDefineScope()->setType(parameter.get(), type);
         auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
         builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
-        builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), type), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+        builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(type)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
         Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
         Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
         builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), true) });
@@ -325,7 +342,7 @@ void StmtCodeGen::codeGen(const FunctionCall& function_call) const {
     builder.CreateStore(name, str);
     auto return_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
     builder.CreateStore(ConstantInt::get(builder.getInt64Ty(), 0), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), return_value, 0));
-    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), type), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), return_value, 1));
+    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(type)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), return_value, 1));
     builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), return_value, ConstantInt::get(builder.getInt1Ty(), true) });
     std::string function_name{ mangled(function_call.name, types) };
     builder.CreateCall(module.getFunction(function_name), {});
@@ -343,7 +360,7 @@ void StmtCodeGen::codeGen(const ReturnStmt& return_stmt) const {
     builder.CreateStore(name, str);
     auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
     builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
-    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), result.second & AbaciValue::TypeMask), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(result.second)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
     Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
     Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
     builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), false) });
@@ -359,6 +376,124 @@ void StmtCodeGen::codeGen([[maybe_unused]] const ExprFunction& expression_functi
 
 template<>
 void StmtCodeGen::codeGen([[maybe_unused]] const Class& class_template) const {
+}
+
+template<>
+void StmtCodeGen::codeGen(const DataAssignStmt& data_assign) const {
+    if (!environment->getCurrentDefineScope()->isDefined(data_assign.name.get())) {
+        UnexpectedError("No such object.");
+    }
+    Constant *name = ConstantDataArray::getString(module.getContext(), data_assign.name.get().c_str());
+    AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
+    builder.CreateStore(name, str);
+    std::vector<int> indices;
+    auto type = environment->getCurrentDefineScope()->getType(data_assign.name.get());
+    for (const auto& member : data_assign.member_list) {
+        if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
+            UnexpectedError("Not an object.")
+        }
+        auto object = std::get<Environment::DefineScope::Object>(type);
+        indices.push_back(jit.getCache()->getMemberIndex(jit.getCache()->getClass(object.class_name), member));
+        type = object.object_types.at(indices.back());
+    }
+    indices.push_back(-1);
+    ArrayType *array_type = ArrayType::get(builder.getInt32Ty(), indices.size());
+    Value *indices_array = builder.CreateAlloca(array_type);
+    for (int i = 0; auto idx : indices) {
+        Value *element_ptr = builder.CreateGEP(array_type, indices_array, { builder.getInt32(0), builder.getInt32(i) });
+        builder.CreateStore(builder.getInt32(idx), element_ptr);
+        ++i;
+    }
+    Value *indices_ptr = builder.CreateGEP(array_type, indices_array, { builder.getInt32(0), builder.getInt32(0) });
+    ExprCodeGen expr(jit);
+    expr(data_assign.value);
+    auto result = expr.get();
+    if (!(type == result.second)) {
+        UnexpectedError("Cannot assign to member with different type.")
+    }
+    auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
+    builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
+    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(result.second)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+    Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
+    Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
+    builder.CreateCall(module.getFunction("setObjectData"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), indices_ptr, abaci_value });
+}
+
+template<>
+void StmtCodeGen::codeGen(const MethodCall& method_call) const {
+    Constant *object_name = ConstantDataArray::getString(module.getContext(), method_call.name.get().c_str());
+    AllocaInst *object_str = builder.CreateAlloca(object_name->getType(), nullptr);
+    builder.CreateStore(object_name, object_str);
+    std::vector<int> indices;
+    auto object_type = environment->getCurrentDefineScope()->getType(method_call.name.get());
+    for (const auto& member : method_call.member_list) {
+        if (!std::holds_alternative<Environment::DefineScope::Object>(object_type)) {
+            UnexpectedError("Not an object.")
+        }
+        auto object = std::get<Environment::DefineScope::Object>(object_type);
+        indices.push_back(jit.getCache()->getMemberIndex(jit.getCache()->getClass(object.class_name), member));
+        object_type = object.object_types.at(indices.back());
+    }
+    indices.push_back(-1);
+    ArrayType *array_type = ArrayType::get(builder.getInt32Ty(), indices.size());
+    Value *indices_array = builder.CreateAlloca(array_type);
+    for (int i = 0; auto idx : indices) {
+        Value *element_ptr = builder.CreateGEP(array_type, indices_array, { builder.getInt32(0), builder.getInt32(i) });
+        builder.CreateStore(builder.getInt32(idx), element_ptr);
+        ++i;
+    }
+    Value *indices_ptr = builder.CreateGEP(array_type, indices_array, { builder.getInt32(0), builder.getInt32(0) });
+    Value *environment_ptr = ConstantInt::get(builder.getInt64Ty(), reinterpret_cast<intptr_t>(environment));
+    Value *typed_environment_ptr = builder.CreateBitCast(environment_ptr, PointerType::get(jit.getNamedType("struct.Environment"), 0));
+    auto data_value = builder.CreateCall(module.getFunction("getObjectData"), { typed_environment_ptr, builder.CreateBitCast(object_str, builder.getInt8PtrTy()), indices_ptr });
+    builder.CreateCall(module.getFunction("setThisPtr"), { typed_environment_ptr, data_value });
+    std::string function_name = std::get<Environment::DefineScope::Object>(object_type).class_name + '.' + method_call.method;
+    const auto& cache_function = jit.getCache()->getFunction(function_name);
+    std::vector<StackType> arguments;
+    std::vector<Environment::DefineScope::Type> types;
+    for (const auto& arg : method_call.args) {
+        ExprCodeGen expr(jit);
+        expr(arg);
+        arguments.push_back(expr.get());
+        types.push_back(arguments.back().second);
+    }
+    environment->beginDefineScope();
+    builder.CreateCall(module.getFunction("beginScope"), { typed_environment_ptr });
+    for (auto arg = arguments.begin(); const auto& parameter : cache_function.parameters) {
+        Constant *name = ConstantDataArray::getString(module.getContext(), parameter.get().c_str());
+        AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
+        builder.CreateStore(name, str);
+        auto result = *arg++;
+        Environment::DefineScope::Type type;
+        if (std::holds_alternative<AbaciValue::Type>(result.second)) {
+            type = static_cast<AbaciValue::Type>(std::get<AbaciValue::Type>(result.second) | AbaciValue::Constant); 
+        }
+        else {
+            type = result.second;
+        }
+        environment->getCurrentDefineScope()->setType(parameter.get(), type);
+        auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
+        builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
+        builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(type)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+        builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), true) });
+    }
+    auto type = jit.getCache()->getFunctionInstantiationType(function_name, types);
+    environment->getCurrentDefineScope()->setType("_return", type);
+    Constant *name = ConstantDataArray::getString(module.getContext(), "_return");
+    AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
+    builder.CreateStore(name, str);
+    auto return_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
+    builder.CreateStore(ConstantInt::get(builder.getInt64Ty(), 0), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), return_value, 0));
+    builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(type)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), return_value, 1));
+    builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), return_value, ConstantInt::get(builder.getInt1Ty(), true) });
+    builder.CreateCall(module.getFunction(mangled(function_name, types)), {});
+    builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
+    builder.CreateCall(module.getFunction("unsetThisPtr"), { typed_environment_ptr });
+    environment->endDefineScope();
+}
+
+template<>
+void StmtCodeGen::codeGen([[maybe_unused]] const ExpressionStmt& expression_stmt) const {
 }
 
 void StmtCodeGen::operator()(const StmtNode& stmt) const {
@@ -401,6 +536,15 @@ void StmtCodeGen::operator()(const StmtNode& stmt) const {
     }
     else if (dynamic_cast<const Class*>(stmt_data)) {
         codeGen(dynamic_cast<const Class&>(*stmt_data));
+    }
+    else if (dynamic_cast<const DataAssignStmt*>(stmt_data)) {
+        codeGen(dynamic_cast<const DataAssignStmt&>(*stmt_data));
+    }
+    else if (dynamic_cast<const MethodCall*>(stmt_data)) {
+        codeGen(dynamic_cast<const MethodCall&>(*stmt_data));
+    }
+    else if (dynamic_cast<const ExpressionStmt*>(stmt_data)) {
+        codeGen(dynamic_cast<const ExpressionStmt&>(*stmt_data));
     }
     else {
         UnexpectedError("Bad StmtNode type.");

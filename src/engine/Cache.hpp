@@ -29,20 +29,21 @@ public:
     };
     struct Instantiation {
         std::string name;
-        std::vector<AbaciValue::Type> parameter_types;
-        AbaciValue::Type return_type;
+        std::vector<Environment::DefineScope::Type> parameter_types;
+        Environment::DefineScope::Type return_type;
         std::shared_ptr<Environment::DefineScope> scope;
     };
     enum Type{ CacheClass, CacheFunction, CacheNone };
     Cache() = default;
     void addClassTemplate(const std::string& name, const std::vector<Variable>& variables, const std::vector<std::string>& methods);
     void addFunctionTemplate(const std::string& name, const std::vector<Variable>& parameters, const StmtList& body);
-    void addFunctionInstantiation(const std::string& name, const std::vector<AbaciValue::Type>& types, Environment *environment);
-    AbaciValue::Type getFunctionInstantiationType(const std::string& name, const std::vector<AbaciValue::Type>& types) const;
-    std::shared_ptr<Environment::DefineScope> getFunctionInstantiationScope(const std::string& name, const std::vector<AbaciValue::Type>& types) const;
+    void addFunctionInstantiation(const std::string& name, const std::vector<Environment::DefineScope::Type>& types, Environment *environment);
+    Environment::DefineScope::Type getFunctionInstantiationType(const std::string& name, const std::vector<Environment::DefineScope::Type>& types) const;
+    std::shared_ptr<Environment::DefineScope> getFunctionInstantiationScope(const std::string& name, const std::vector<Environment::DefineScope::Type>& types) const;
     Type getCacheType(const std::string& name) const;
     const Function& getFunction(const std::string& name) const;
     const Class& getClass(const std::string& name) const;
+    unsigned getMemberIndex(const Class& cache_class, const Variable& member) const;
     const auto& getInstantiations() const { return instantiations; }
     void clearInstantiations() { instantiations.clear(); }
 private:

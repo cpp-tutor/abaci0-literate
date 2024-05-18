@@ -23,7 +23,7 @@ using abaci::engine::Cache;
 using abaci::utility::AbaciValue;
 using abaci::utility::Variable;
 using abaci::utility::Environment;
-using StackType = std::pair<Value*,AbaciValue::Type>;
+using StackType = std::pair<Value*,Environment::DefineScope::Type>;
 
 class ExprCodeGen {
     JIT& jit;
@@ -70,7 +70,7 @@ private:
 };
 
 class TypeEvalGen {
-    mutable std::vector<AbaciValue::Type> stack;
+    mutable std::vector<Environment::DefineScope::Type> stack;
     Environment *environment;
     Cache *cache;
     auto pop() const {
@@ -79,18 +79,18 @@ class TypeEvalGen {
         stack.pop_back();
         return value;
     }
-    void push(AbaciValue::Type value) const {
+    void push(const Environment::DefineScope::Type& value) const {
         stack.push_back(value);
     }
 public:
     TypeEvalGen() = delete;
     TypeEvalGen(Environment *environment, Cache *cache) : environment{ environment }, cache{ cache } {}
-    AbaciValue::Type get() const {
+    Environment::DefineScope::Type get() const {
         Assert(stack.size() == 1)
         return stack.front();
     }
     void operator()(const abaci::ast::ExprNode&) const;
-    AbaciValue::Type promote(AbaciValue::Type, AbaciValue::Type) const;
+    AbaciValue::Type promote(Environment::DefineScope::Type, Environment::DefineScope::Type) const;
 };
 
 class TypeCodeGen {
@@ -98,14 +98,14 @@ class TypeCodeGen {
     Cache *cache;
     bool is_function;
     mutable bool type_is_set{ false };
-    mutable AbaciValue::Type return_type;
+    mutable Environment::DefineScope::Type return_type;
 public:
     TypeCodeGen() = delete;
     TypeCodeGen(Environment *environment, Cache *cache, bool is_function = false)
         : environment{ environment }, cache{ cache }, is_function{ is_function } {}
     void operator()(const abaci::ast::StmtList&) const;
     void operator()(const abaci::ast::StmtNode&) const;
-    auto get() const {
+    Environment::DefineScope::Type get() const {
         if (type_is_set) {
             return return_type;
         }

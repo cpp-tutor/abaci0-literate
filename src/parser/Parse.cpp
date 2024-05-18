@@ -26,6 +26,8 @@ using x3::ascii::space;
 using abaci::ast::ExprNode;
 using abaci::ast::ExprList;
 using abaci::ast::ValueCall;
+using abaci::ast::DataCall;
+using abaci::ast::MethodValueCall;
 using abaci::ast::StmtNode;
 using abaci::ast::StmtList;
 using abaci::ast::CommentStmt;
@@ -44,6 +46,9 @@ using abaci::ast::FunctionCall;
 using abaci::ast::ReturnStmt;
 using abaci::ast::ExprFunction;
 using abaci::ast::Class;
+using abaci::ast::DataAssignStmt;
+using abaci::ast::MethodCall;
+using abaci::ast::ExpressionStmt;
 
 x3::rule<class number_str, std::string> number_str;
 x3::rule<class base_number_str, std::string> base_number_str;
@@ -99,7 +104,12 @@ x3::rule<class index, ExprList> const index;
 x3::rule<class primary_n, ExprNode> const primary_n;
 x3::rule<class identifier, std::string> const identifier;
 x3::rule<class variable, Variable> const variable;
+x3::rule<class this_ptr, Variable> const this_ptr;
 x3::rule<class function_value_call, ValueCall> const function_value_call;
+x3::rule<class data_value_call, DataCall> const data_value_call;
+x3::rule<class this_value_call, DataCall> const this_value_call;
+x3::rule<class data_method_call, MethodValueCall> const data_method_call;
+x3::rule<class this_method_call, MethodValueCall> const this_method_call;
 
 x3::rule<class comment_items, CommentStmt> const comment_items;
 x3::rule<class comment, StmtNode> const comment;
@@ -130,6 +140,14 @@ x3::rule<class return_items, ReturnStmt> const return_items;
 x3::rule<class return_stmt, StmtNode> const return_stmt;
 x3::rule<class class_items, Class> const class_items;
 x3::rule<class class_template, StmtNode> const class_template;
+x3::rule<class data_assign_items, DataAssignStmt> const data_assign_items;
+x3::rule<class data_assign_stmt, StmtNode> const data_assign_stmt;
+x3::rule<class method_call_items, MethodCall> const method_call_items;
+x3::rule<class this_call_items, MethodCall> const this_call_items;
+x3::rule<class method_call, StmtNode> const method_call;
+x3::rule<class this_assign_items, DataAssignStmt> const this_assign_items;
+x3::rule<class expression_stmt_items, ExpressionStmt> const expression_stmt_items;
+x3::rule<class expression_stmt, StmtNode> const expression_stmt;
 x3::rule<class keywords, std::string> const keywords;
 x3::rule<class statment, StmtNode> const statement;
 x3::rule<class block, StmtList> const block;
@@ -249,7 +267,12 @@ const auto to_def = string(TO)[getOperator];
 const auto identifier_def = lexeme[( ( char_('A', 'Z') | char_('a', 'z') | char_('\'') | char_('\200', '\377') )
     >> *( char_('A', 'Z') | char_('a', 'z') | char_('0', '9') | char_('_') | char_('\'') | char_('\200', '\377') ) ) - keywords];
 const auto variable_def = identifier[makeVariable];
+const auto this_ptr_def = string(THIS)[makeVariable];
 const auto function_value_call_def = identifier >> call_args;
+const auto data_value_call_def = variable >> +( DOT >> variable );
+const auto this_value_call_def = this_ptr >> +( DOT >> variable );
+const auto data_method_call_def = variable >> DOT >> *( variable >> DOT ) >> identifier >> call_args;
+const auto this_method_call_def = this_ptr >> DOT >> *( variable >> DOT ) >> identifier >> call_args;
 
 const auto expression_def = logic_or[MakeNode<ExprNode::Boolean>()];
 const auto logic_or_def = logic_and_n >> *( logical_or >> logic_and_n );
@@ -274,10 +297,12 @@ const auto unary_n_def = unary[MakeNode<ExprNode::Unary>()];
 const auto unary_def = *( minus | logical_not | bitwise_compl ) >> index_n;
 const auto index_n_def = index[MakeNode<ExprNode::Right>()];
 const auto index_def = primary_n >> *( exponent >> unary_n );
-const auto primary_n_def = value[MakeNode<>()] | LEFT_PAREN >> logic_or[MakeNode<ExprNode::Boolean>()] >> RIGHT_PAREN | function_value_call[MakeNode<>()] | variable[MakeNode<>()];
+const auto primary_n_def = value[MakeNode<>()] | LEFT_PAREN >> logic_or[MakeNode<ExprNode::Boolean>()] >> RIGHT_PAREN
+    | function_value_call[MakeNode<>()] | this_method_call[MakeNode<>()] | data_method_call[MakeNode<>()] 
+    | this_value_call[MakeNode<>()] | data_value_call[MakeNode<>()] | variable[MakeNode<>()];
 
 const auto keywords_def = lit(AND) | CASE | CLASS | ELSE | ENDCASE | ENDCLASS | ENDFN | ENDIF | ENDWHILE
-    | FALSE | FN | IF | LET | NIL | NOT | OR | PRINT | RETURN | TRUE | WHEN | WHILE;
+    | FALSE | FN | IF | LET | NIL | NOT | OR | PRINT | RETURN | THIS | TRUE | WHEN | WHILE;
 
 const auto comment_items_def = *(char_ - '\n');
 const auto comment_def = REM >> comment_items[MakeStmt<CommentStmt>()];
@@ -314,8 +339,17 @@ const auto return_stmt_def = RETURN >> return_items[MakeStmt<ReturnStmt>()];
 
 const auto class_items_def = identifier >> function_parameters >> *(FN >> function_items >> ENDFN);
 const auto class_template_def = CLASS >> class_items[MakeStmt<Class>()] >> ENDCLASS;
+const auto data_assign_items_def = variable >> +( DOT >> variable ) >> from >> expression;
+const auto this_assign_items_def = this_ptr >> +( DOT >> variable ) >> from >> expression;
+const auto data_assign_stmt_def = this_assign_items[MakeStmt<DataAssignStmt>()] | data_assign_items[MakeStmt<DataAssignStmt>()];
+const auto this_call_items_def = this_ptr >> DOT >> *( variable >> DOT ) >> identifier >> call_args;
+const auto method_call_items_def = variable >> DOT >> *( variable >> DOT ) >> identifier >> call_args;
+const auto method_call_def = this_call_items[MakeStmt<MethodCall>()] | method_call_items[MakeStmt<MethodCall>()];
 
-const auto statement_def = if_stmt | print_stmt | expression_function | let_stmt | assign_stmt | while_stmt | repeat_stmt | case_stmt | function | function_call | return_stmt | class_template | comment; 
+const auto expression_stmt_items_def = expression;
+const auto expression_stmt_def = expression_stmt_items[MakeStmt<ExpressionStmt>()];
+
+const auto statement_def = if_stmt | print_stmt | expression_function | let_stmt | method_call | data_assign_stmt | assign_stmt | while_stmt | repeat_stmt | case_stmt | function | function_call | return_stmt | class_template | expression_stmt | comment;
 const auto block_def = *statement;
 
 BOOST_SPIRIT_DEFINE(number_str, base_number_str, boolean_str, string_str, value)
@@ -327,13 +361,16 @@ BOOST_SPIRIT_DEFINE(expression, logic_or, logic_and, logic_and_n,
     bit_or, bit_or_n, bit_xor, bit_xor_n, bit_and, bit_and_n,
     equality, equality_n, comparison, comparison_n,
     term, term_n, factor, factor_n, unary, unary_n, index, index_n, primary_n)
-BOOST_SPIRIT_DEFINE(identifier, variable, function_value_call, keywords,
+BOOST_SPIRIT_DEFINE(identifier, variable, function_value_call, data_value_call, this_value_call,
+    data_method_call, this_method_call, keywords,
     comment_items, comment, print_items, print_stmt,
     let_items, let_stmt, assign_items, assign_stmt, if_items, if_stmt,
     when_items, while_items, while_stmt, repeat_items, repeat_stmt, case_items, case_stmt,
     function_parameters, function_items, function, call_args, call_items, function_call,
     expression_function_items, expression_function,
-    return_items, return_stmt, class_items, class_template, statement, block)
+    return_items, return_stmt, class_items, class_template, data_assign_items, data_assign_stmt,
+    this_ptr, this_assign_items, this_call_items,
+    method_call_items, method_call, expression_stmt_items, expression_stmt, statement, block)
 
 bool parse_block(const std::string& block_str, StmtList& ast) {
     auto iter = block_str.begin();

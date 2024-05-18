@@ -22,10 +22,22 @@ struct ValueCall {
     ExprList args;
 };
 
+struct DataCall {
+    Variable name;
+    std::vector<Variable> member_list;
+};
+
+struct MethodValueCall {
+    Variable name;
+    std::vector<Variable> member_list;
+    std::string method;
+    ExprList args;
+};
+
 class ExprNode {
 public:
     enum Association { Unset, Left, Right, Unary, Boolean };
-    enum Type { ValueNode, OperatorNode, ListNode, VariableNode, CallNode };
+    enum Type { ValueNode, OperatorNode, ListNode, VariableNode, CallNode, DataNode, MethodNode };
     ExprNode() = default;
     ExprNode(const ExprNode&) = default;
     ExprNode& operator=(const ExprNode&) = default;
@@ -36,12 +48,14 @@ public:
     Association getAssociation() const { return association; }
     const auto& get() const { return data; }
 private:
-    std::variant<AbaciValue,Operator,ExprList,Variable,ValueCall> data;
+    std::variant<AbaciValue,Operator,ExprList,Variable,ValueCall,DataCall,MethodValueCall> data;
     Association association{ Unset };
 };
 
 } // namespace abaci::ast
 
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::ValueCall, name, args)
+BOOST_FUSION_ADAPT_STRUCT(abaci::ast::DataCall, name, member_list)
+BOOST_FUSION_ADAPT_STRUCT(abaci::ast::MethodValueCall, name, member_list, method, args)
 
 #endif

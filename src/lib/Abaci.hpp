@@ -18,9 +18,17 @@ void setVariable(abaci::utility::Environment *environment, char *name, abaci::ut
 
 abaci::utility::AbaciValue *getVariable(abaci::utility::Environment *environment, char *name);
 
+void setObjectData(abaci::utility::Environment *environment, char *name, int *indices, abaci::utility::AbaciValue *value);
+
+abaci::utility::AbaciValue *getObjectData(abaci::utility::Environment *environment, char *name, int *indices);
+
 void beginScope(abaci::utility::Environment *environment);
 
 void endScope(abaci::utility::Environment *environment);
+
+void setThisPtr(abaci::utility::Environment *environment, abaci::utility::AbaciValue *ptr);
+
+void unsetThisPtr(abaci::utility::Environment *environment);
 
 }
 
