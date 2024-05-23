@@ -8,7 +8,7 @@ The file `Abaci0.md` is a human-readable manuscript intended a full description 
 
 To build this project requires:
 
-* A C++ compiler, tested only with `g++` version 12.2.0
+* A C++ compiler, tested only with `g++` version 12.2.0 and `clang++` version 14.0.6
 * The LLVM development libraries, built against version 14.0
 * The Boost headers, specifically Boost Spirit X3 in Boost 1.74
 * Headers and link-library of `libfmt`, built against version 10.2.1
@@ -51,6 +51,8 @@ Numerous things to add before a 1.0.0 release. Please raise issues or pull reque
 * **0.8.9** (2024-Apr-25) Factorial and Fibonacci functions now generate correct code, updates made to source manuscript.
 
 * **0.9.0** (2024-May-09) Dot selection for data members and methods, this pointer.
+
+* **0.9.1** (2024-May-22) Fixes for VS2022, improved name mangling, self-assignment.
 
 ## License
 

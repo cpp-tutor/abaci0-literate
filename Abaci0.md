@@ -100,7 +100,7 @@ The copy constructor and copy-assignment operator both perform a deep copy on ty
 
 ```cpp
     AbaciValue(const AbaciValue& rhs) { clone(rhs); }
-    AbaciValue& operator=(const AbaciValue& rhs) { this->~AbaciValue(); clone(rhs); return *this; }
+    AbaciValue& operator=(const AbaciValue& rhs) { if (this != &rhs) { this->~AbaciValue(); clone(rhs); } return *this; }
     ~AbaciValue();
 private:
     void clone(const AbaciValue&);
@@ -509,10 +509,7 @@ Global function `mangled()` creates a unique function name based upon the types 
 std::string mangled(const std::string& name, const std::vector<Environment::DefineScope::Type>& types) {
     std::string function_name;
     for (unsigned char ch : name) {
-        if (ch == '\'') {
-            function_name.push_back('_');
-        }
-        else if (ch >= 0x80) {
+        if (ch >= 0x80 || ch == '\'') {
             function_name.push_back('.');
             char buffer[16];
             auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer), static_cast<int>(ch), 16);
@@ -522,8 +519,11 @@ std::string mangled(const std::string& name, const std::vector<Environment::Defi
             *ptr = '\0';
             function_name.append(buffer);
         }
-        else {
+        else if (isalnum(ch) || ch == '_' || ch == '.') {
             function_name.push_back(ch);
+        }
+        else {
+            UnexpectedError("Bad function name.")
         }
     }
     for (const auto& parameter_type : types) {
@@ -1127,7 +1127,7 @@ bool test_statement(const std::string& stmt_str);
 
 This implementation file is the only part of the compiler which directly utilizes the X3 library, specifically header `<boost/spirit/home/x3.hpp>`. To describe X3 (very) briefly, it allows rule-based analysis and conversion of textual input, where complex rules are synthesised from elementary ones. This sounds a lot like the way parser-generators such as `bison` operate, and indeed there are similarities. However with X3 full control of the textual input is maintained, while parser-generators require a scanner function to return numeric tokens for matched strings. It is claimed that the parsing performance of X3 is close to that achieved with a hand-written parser, and there is no intermediate C++ file, the X3 rule definitions compile straight to object code.
 
-The "compilation pipeline" is by implication modified from the usual "Lexer -> Parser -> Analysis -> Code Generation", to simply "Lexical Analysis -> Code Generation". Importantly, there is no need for a symbol table to be active during the parsing phase.
+The "compilation pipeline" is by implication modified from the usual *Lexer&xrarr; Parser&xrarr; Analysis&xrarr; Code Generation*, to simply *Lexical Analysis&xrarr; Code Generation*. Importantly, there is no need for a symbol table to be active during the parsing phase.
 
 Writing an X3 parser involves a considerable amount of boilerplate code, but the rule definitions themselves are described using a terse syntax that resembles that for regular expressions (with necessary allowances for conventional C++ operator syntax). For a more complete introduction and a quick start, consult the X3 documentation; listed below are some of the most basic X3 constructs to allow the reader to gain some understanding of the source code for this file.
 
@@ -4361,8 +4361,8 @@ ExecFunctionType JIT::getExecFunction() {
         });
         UnexpectedError("Failed add IR module");
     }
-    if (auto err = (*jit)->getMainJITDylib().define(
-            absoluteSymbols({{(*jit)->getExecutionSession().intern("pow"), { reinterpret_cast<uintptr_t>(&pow), JITSymbolFlags::Exported }},
+    if (auto err = (*jit)->getMainJITDylib().define(absoluteSymbols(SymbolMap{
+            {(*jit)->getExecutionSession().intern("pow"), { reinterpret_cast<uintptr_t>(static_cast<double(*)(double,double)>(&pow)), JITSymbolFlags::Exported }},
             {(*jit)->getExecutionSession().intern("strcmp"), { reinterpret_cast<uintptr_t>(&strcmp), JITSymbolFlags::Exported }},
             {(*jit)->getExecutionSession().intern("memcpy"), { reinterpret_cast<uintptr_t>(&memcpy), JITSymbolFlags::Exported }},
             {(*jit)->getExecutionSession().intern("complexMath"), { reinterpret_cast<uintptr_t>(&complexMath), JITSymbolFlags::Exported }},
@@ -4402,7 +4402,7 @@ The main program contained in this file is not intended to be fully-featured, bu
 In the case of a single program argument (`./abaci0 script.abaci`), this file is read in one go before `ast`, `environment` and `functions` are created (as empty). The call to `parse_block()` returns `true` if successful, causing use of class `TypeCodeGen` over the whole program. If no errors are caused by this stage, `jit` and `code_gen` are created and the resulting `programFunc` is called before the main program exits. Syntax errors cause the message `"Could not parse file."`, while other errors would result in exceptions being thrown; if errors are caught, the main program exits with a non-zero failure code.
 
 ```cpp
-const std::string version = "0.9.0 (2024-May-09)";
+const std::string version = "0.9.1 (2024-May-22)";
 
 int main(const int argc, const char **argv) {
     if (argc == 2) {

@@ -71,7 +71,7 @@ struct AbaciValue {
     explicit AbaciValue(const std::string& s) : type{ String } { value.str = new abaci::utility::String(s); }
     explicit AbaciValue(const char8_t *s, std::size_t sz, AbaciValue *data) : type{ Object } { value.object = new abaci::utility::Object(s, sz, data); }
     AbaciValue(const AbaciValue& rhs) { clone(rhs); }
-    AbaciValue& operator=(const AbaciValue& rhs) { this->~AbaciValue(); clone(rhs); return *this; }
+    AbaciValue& operator=(const AbaciValue& rhs) { if (this != &rhs) { this->~AbaciValue(); clone(rhs); } return *this; }
     ~AbaciValue();
 private:
     void clone(const AbaciValue&);

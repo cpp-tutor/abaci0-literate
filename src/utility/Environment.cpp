@@ -1,6 +1,7 @@
 #include "Environment.hpp"
 #include "utility/Report.hpp"
 #include <charconv>
+#include <cctype>
 
 namespace abaci::utility {
 
@@ -93,10 +94,7 @@ AbaciValue *Environment::Scope::getValue(const std::string& name) {
 std::string mangled(const std::string& name, const std::vector<Environment::DefineScope::Type>& types) {
     std::string function_name;
     for (unsigned char ch : name) {
-        if (ch == '\'') {
-            function_name.push_back('_');
-        }
-        else if (ch >= 0x80) {
+        if (ch >= 0x80 || ch == '\'') {
             function_name.push_back('.');
             char buffer[16];
             auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer), static_cast<int>(ch), 16);
@@ -106,8 +104,11 @@ std::string mangled(const std::string& name, const std::vector<Environment::Defi
             *ptr = '\0';
             function_name.append(buffer);
         }
-        else {
+        else if (isalnum(ch) || ch == '_' || ch == '.') {
             function_name.push_back(ch);
+        }
+        else {
+            UnexpectedError("Bad function name.")
         }
     }
     for (const auto& parameter_type : types) {

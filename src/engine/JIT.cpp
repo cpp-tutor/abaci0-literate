@@ -110,8 +110,8 @@ ExecFunctionType JIT::getExecFunction() {
         });
         UnexpectedError("Failed add IR module");
     }
-    if (auto err = (*jit)->getMainJITDylib().define(
-            absoluteSymbols({{(*jit)->getExecutionSession().intern("pow"), { reinterpret_cast<uintptr_t>(&pow), JITSymbolFlags::Exported }},
+    if (auto err = (*jit)->getMainJITDylib().define(absoluteSymbols(SymbolMap{
+            {(*jit)->getExecutionSession().intern("pow"), { reinterpret_cast<uintptr_t>(static_cast<double(*)(double,double)>(&pow)), JITSymbolFlags::Exported }},
             {(*jit)->getExecutionSession().intern("strcmp"), { reinterpret_cast<uintptr_t>(&strcmp), JITSymbolFlags::Exported }},
             {(*jit)->getExecutionSession().intern("memcpy"), { reinterpret_cast<uintptr_t>(&memcpy), JITSymbolFlags::Exported }},
             {(*jit)->getExecutionSession().intern("complexMath"), { reinterpret_cast<uintptr_t>(&complexMath), JITSymbolFlags::Exported }},
