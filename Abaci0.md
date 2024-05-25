@@ -76,7 +76,7 @@ Class `AbaciValue`'s `Type` enum lists all of the possible types (in approximate
 
 ```cpp
 struct AbaciValue {
-    enum Type { Nil, Boolean, Integer, Float, Complex, String, Object, TypeMask = 15, Constant = 16, Unset = 127 };
+    enum Type { Nil, Boolean, Integer, Float, Complex, String, Object, TypeMask = 15, Constant = 16, Real = 98, Imaginary, Unset = 127 };
     union {
         void *nil{ nullptr };
         bool boolean;
@@ -120,17 +120,6 @@ enum class Operator { None, Plus, Minus, Times, Divide, Modulo, FloorDivide, Exp
 extern const std::unordered_map<std::string,Operator> Operators;
 
 } // namespace abaci::utility
-
-std::ostream& operator<<(std::ostream& os, const abaci::utility::AbaciValue&);
-
-std::ostream& operator<<(std::ostream& os, const abaci::utility::Operator);
-
-template<typename T>
-std::string toString(const T& value) {
-    std::ostringstream oss;
-    oss << value;
-    return oss.str();
-}
 ```
 
 ### `Utility.cpp`
@@ -242,43 +231,6 @@ Object::~Object() {
 }
 
 } // namespace abaci::utility
-```
-
-Stream output for `AbaciValue` objects uses tokens defined in `parser/Keywords.hpp`, with floating-point values output to ten significant digits in general form.
-
-```cpp
-std::ostream& operator<<(std::ostream& os, const abaci::utility::AbaciValue& value) {
-    using abaci::utility::AbaciValue;
-    switch (value.type) {
-        case AbaciValue::Nil:
-            return os << NIL;
-        case AbaciValue::Boolean:
-            return os << (value.value.boolean ? TRUE : FALSE);
-        case AbaciValue::Integer:
-            return os << static_cast<long long>(value.value.integer);
-        case AbaciValue::Float:
-            return os << std::setprecision(10) << value.value.floating;
-        case AbaciValue::Complex:
-            return os << value.value.complex->real << (value.value.complex->imag >= 0 ? "+" : "") << value.value.complex->imag << IMAGINARY;
-        case AbaciValue::String:
-            return os.write(reinterpret_cast<const char*>(value.value.str->ptr), value.value.str->len);
-        default:
-            return os << value.type << '?';
-    }
-}
-```
-
-Stream output of `Operator` tokens is supported which was previously used for AST printing.
-
-```cpp
-std::ostream& operator<<(std::ostream& os, const abaci::utility::Operator op) {
-    for (const auto& item : abaci::utility::Operators) {
-        if (item.second == op) {
-            return os << '(' << item.first << ')';
-        }
-    }
-    return os << "(?)";
-}
 ```
 
 ### `Environment.hpp`
@@ -659,7 +611,7 @@ Convenience macros `LogicError()`, `UnexpectedError()` and `Assert()` allow for 
 
 ### `Abaci.hpp`
 
-The functionality of the compiler which needs to be made available to the JIT-compiled code at execution time are listed in this header file. The functions are C++ functions declared with C-linkage, ensuring that the unmangled names can be used in the client code. This library is intentionally small, with three output-related functions, one related to operations on complex numbers, and eight functions related to run-time environment operations.
+The functionality of the compiler which needs to be made available to the JIT-compiled code at execution time are listed in this header file. The functions are C++ functions declared with C-linkage, ensuring that the unmangled names can be used in the client code. This library is intentionally small, comprising of three output-related functions, one related to operations on complex numbers, eight functions related to run-time environment operations and two functions related to user input of strings and type conversions.
 
 ```cpp
 extern "C" {
@@ -687,6 +639,10 @@ void endScope(abaci::utility::Environment *environment);
 void setThisPtr(abaci::utility::Environment *environment, abaci::utility::AbaciValue *ptr);
 
 void unsetThisPtr(abaci::utility::Environment *environment);
+
+void getUserInput(abaci::utility::String *str);
+
+void convertType(abaci::utility::AbaciValue *to, abaci::utility::AbaciValue *from);
 
 }
 ```
@@ -799,7 +755,7 @@ Functions `setObjectData()` and `getObjectData()` perform lookup of an object by
 
 ```cpp
 void setObjectData(Environment *environment, char *name, int *indices, AbaciValue *value) {
-    auto data = (strcmp(name, THIS) == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
+    auto data = (strcmp(name, "_this") == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
     while (*indices != -1) {
         data = &data->value.object->variables[*indices];
         ++indices;
@@ -808,7 +764,7 @@ void setObjectData(Environment *environment, char *name, int *indices, AbaciValu
 }
 
 AbaciValue *getObjectData(Environment *environment, char *name, int *indices) {
-    auto data = (strcmp(name, THIS) == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
+    auto data = (strcmp(name, "_this") == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
     while (*indices != -1) {
         data = &data->value.object->variables[*indices];
         ++indices;
@@ -836,8 +792,178 @@ void setThisPtr(Environment *environment, AbaciValue *ptr) {
     environment->setThisPtr(ptr);
 }
 
-void unsetThisPtr(abaci::utility::Environment *environment) {
+void unsetThisPtr(Environment *environment) {
     environment->unsetThisPtr();
+}
+```
+
+Function `getUserInput()` is called with a pointer to an already-constructed `String` object, and reads newline-terminated input into the pointer member, setting the length member to the input string length and removing the newline character.
+
+```cpp
+void getUserInput(String *str) {
+    fgets(reinterpret_cast<char*>(str->ptr), str->len, stdin);
+    str->len = strlen(reinterpret_cast<char*>(str->ptr));
+    if (*(str->ptr + str->len - 1) == '\n') {
+        --str->len;
+    }
+    fflush(stdin);
+}
+```
+
+A nested switch statement is used to provide all of the supported type conversions in function `convertType()` with the outer being the "to" type and the inner begin the "from" type. No memory allocations are made as the input parameters are assumed to point to suitably allocated `AbaciValue` objects. Conversions to `String` are as for `printValue()` with the buffer size set in `Expr.hpp`, while conversion from `String` use `std::from_chars()` and support base prefixes for integer types.
+
+```cpp
+void convertType(AbaciValue *to, AbaciValue *from) {
+    switch (to->type) {
+        case AbaciValue::Integer:
+            switch(from->type) {
+                case AbaciValue::Boolean:
+                    to->value.integer = static_cast<long long>(from->value.boolean);
+                    break;
+                case AbaciValue::Integer:
+                    to->value.integer = from->value.integer;
+                    break;
+                case AbaciValue::Float:
+                    to->value.integer = static_cast<long long>(from->value.floating);
+                    break;
+                case AbaciValue::String: {
+                    auto *str = reinterpret_cast<const char*>(from->value.str->ptr);
+                    if (strncmp(HEX_PREFIX, str, strlen(HEX_PREFIX)) == 0) {
+                        std::from_chars(str + strlen(HEX_PREFIX), str + from->value.str->len, to->value.integer, 16);
+                    }
+                    else if (strncmp(BIN_PREFIX, str, strlen(BIN_PREFIX)) == 0) {
+                        std::from_chars(str + strlen(BIN_PREFIX), str + from->value.str->len, to->value.integer, 2);
+                    }
+                    else if (strncmp(OCT_PREFIX, str, strlen(OCT_PREFIX)) == 0) {
+                        std::from_chars(str + strlen(OCT_PREFIX), str + from->value.str->len, to->value.integer, 8);
+                    }
+                    else {
+                        std::from_chars(str, str + from->value.str->len, to->value.integer, 10);
+                    }
+                    break;
+                }
+                default:
+                    LogicError("Bad type(s) for conversion.");
+            }
+            break;
+        case AbaciValue::Float:
+            switch(from->type) {
+                case AbaciValue::Boolean:
+                    to->value.floating = static_cast<double>(from->value.boolean);
+                    break;
+                case AbaciValue::Integer:
+                    to->value.floating = static_cast<double>(from->value.integer);
+                    break;
+                case AbaciValue::Float:
+                    to->value.floating = from->value.floating;
+                    break;
+                case AbaciValue::String: {
+                    auto *str = reinterpret_cast<const char*>(from->value.str->ptr);
+                    std::from_chars(str, str + from->value.str->len, to->value.floating);
+                    break;
+                }
+                default:
+                    LogicError("Bad type(s) for conversion.");
+            }
+            break;
+        case AbaciValue::Complex:
+            switch(from->type) {
+                case AbaciValue::Boolean:
+                    to->value.complex->real = static_cast<double>(from->value.boolean);
+                    to->value.complex->imag = 0.0;
+                    break;
+                case AbaciValue::Integer:
+                    to->value.complex->real = static_cast<double>(from->value.integer);
+                    to->value.complex->imag = 0.0;
+                    break;
+                case AbaciValue::Float:
+                    to->value.complex->real = from->value.floating;
+                    to->value.complex->imag = 0.0;
+                    break;
+                case AbaciValue::String: {
+                    auto *str = reinterpret_cast<const char*>(from->value.str->ptr);
+                    double d;
+                    auto [ ptr, ec ] = std::from_chars(str, str + from->value.str->len, d);
+                    if (strncmp(ptr, IMAGINARY, strlen(IMAGINARY)) == 0) {
+                        to->value.complex->real = 0;
+                        to->value.complex->imag = d;
+                    }
+                    else if (*ptr) {
+                        to->value.complex->real = d;
+                        if (*ptr == '+') {
+                            ++ptr;
+                        }
+                        std::from_chars(ptr, str + from->value.str->len, d);
+                        to->value.complex->imag = d;
+                    }
+                    else {
+                        to->value.complex->real = d;
+                        to->value.complex->imag = 0;
+                    }
+                    break;
+                }
+                case AbaciValue::Complex:
+                    to->value.complex->real = from->value.complex->real;
+                    to->value.complex->imag = from->value.complex->imag;
+                    break;
+                default:
+                    LogicError("Bad type(s) for conversion.");
+            }
+            break;
+        case AbaciValue::String: {
+            std::string str;
+            switch (from->type) {
+                case AbaciValue::Boolean:
+                    str = format("{}", from->value.boolean ? TRUE : FALSE);
+                    break;
+                case AbaciValue::Integer:
+                    str = format("{}", static_cast<long long>(from->value.integer));
+                    break;
+                case AbaciValue::Float:
+                    str = format("{:.10g}", from->value.floating);
+                    break;
+                case AbaciValue::Complex:
+                    str = format("{:.10g}", from->value.complex->real);
+                    if (from->value.complex->imag != 0) {
+                        str.append(format("{:+.10g}{}", from->value.complex->imag, IMAGINARY));
+                    }
+                    break;
+                case AbaciValue::String:
+                    str.assign(reinterpret_cast<const char*>(from->value.str->ptr), from->value.str->len);
+                    break;
+                default:
+                    LogicError("Bad type(s) for conversion.");
+            }
+            char *ptr = reinterpret_cast<char*>(to->value.str->ptr);
+            if (str.size() < to->value.str->len) {
+                to->value.str->len = str.size();
+            }
+            strncpy(ptr, str.c_str(), to->value.str->len);
+            break;
+        }
+        case AbaciValue::Real:
+            switch(from->type) {
+                case AbaciValue::Complex:
+                    to->value.floating = from->value.complex->real;
+                    to->type = AbaciValue::Float;
+                    break;
+                default:
+                    LogicError("Must be complex type.");
+            }
+            break;
+        case AbaciValue::Imaginary:
+            switch(from->type) {
+                case AbaciValue::Complex:
+                    to->value.floating = from->value.complex->imag;
+                    to->type = AbaciValue::Float;
+                    break;
+                default:
+                    LogicError("Must be complex type.");
+            }
+            break;
+        default:
+            UnexpectedError("Bad target conversion type.")
+    }
 }
 ```
 
@@ -855,7 +981,7 @@ The basis for the design of class `ExprNode` is the variant container type `std:
 
 The solution chosen was to abandon Boost Fusion (along with `x3::variant`) and instead create generic copy constructors and copy assignment constructors which would populate the correct field of the `std::variant` outlined above. (These steps appear to be all which is needed to make a C++ class compatible with X3.) It is still the responsibility of the X3 rule and its helper functions to correctly set the `association` data member of any `ExprList` containing an `ExprNode`, while none of the other types use it at all, which may appear incongruous at first glance.
 
-Definition of this class begins with a forward-declaration and definitions of all of the possible types of the `std::variant`. The types `ValueCall`, `DataCall` and `MethodValueCall` are used to hold information related to function calls, object member selection and object method calls.
+Definition of this class begins with a forward-declaration and definitions of all of the possible types of the `std::variant`. The types `ValueCall`, `DataCall` and `MethodValueCall` are used to hold information related to function calls, object member selection and object method calls. Type `UserInput` is placeholder for the `input` keyword and does not contain any usable state, while `TypeConv` and `TypeConvItems` are used to hold information about `AbaciValue` type conversions. The reason for two classes is that the one with an `ExprNode` data member must be declared after the definition of `ExprNode`.
 
 ```cpp
 namespace abaci::ast {
@@ -884,6 +1010,17 @@ struct MethodValueCall {
     std::string method;
     ExprList args;
 };
+
+struct UserInput {
+    inline const static int MAX_SIZE = 256;
+    std::string dummy;
+};
+
+struct TypeConv {
+    inline const static int MAX_SIZE = 32;
+    AbaciValue::Type to_type;
+    std::shared_ptr<ExprNode> expression;
+};
 ```
 
 The class definition itself begins with two plain enums, `Association` and `Type` (which holds the same order as types specified in the `std::variant`), followed by defaulted constructors.
@@ -892,7 +1029,7 @@ The class definition itself begins with two plain enums, `Association` and `Type
 class ExprNode {
 public:
     enum Association { Unset, Left, Right, Unary, Boolean };
-    enum Type { ValueNode, OperatorNode, ListNode, VariableNode, CallNode, DataNode, MethodNode };
+    enum Type { ValueNode, OperatorNode, ListNode, VariableNode, CallNode, DataNode, MethodNode, InputNode, ConvNode };
     ExprNode() = default;
     ExprNode(const ExprNode&) = default;
     ExprNode& operator=(const ExprNode&) = default;
@@ -913,19 +1050,26 @@ The "getters" and private member variables complete the class definition. The sw
     Association getAssociation() const { return association; }
     const auto& get() const { return data; }
 private:
-    std::variant<AbaciValue,Operator,ExprList,Variable,ValueCall,DataCall,MethodValueCall> data;
+    std::variant<AbaciValue,Operator,ExprList,Variable,ValueCall,DataCall,MethodValueCall,UserInput,TypeConv> data;
     Association association{ Unset };
+};
+
+struct TypeConvItems {
+    std::string to_type;
+    ExprNode expression;
 };
 
 } // namespace abaci::ast
 ```
 
-The classes `ValueCall`, `DataCall` and `MethodValueCall` are then adapted by Boost Fusion to be able to be used with an X3 rule&mdash;this takes place at global (not namespace) scope.
+The classes `ValueCall`, `DataCall`, `MethodValueCall`, `UserInput` and `TypeConvItems` are then adapted by Boost Fusion to be able to be used with an X3 rule&mdash;this takes place at global (not namespace) scope.
 
 ```cpp
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::ValueCall, name, args)
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::DataCall, name, member_list)
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::MethodValueCall, name, member_list, method, args)
+BOOST_FUSION_ADAPT_STRUCT(abaci::ast::UserInput, dummy)
+BOOST_FUSION_ADAPT_STRUCT(abaci::ast::TypeConvItems, to_type, expression)
 ```
 
 ### `Stmt.hpp`
@@ -1157,6 +1301,9 @@ namespace abaci::parser {
 
 namespace x3 = boost::spirit::x3;
 using abaci::utility::AbaciValue;
+using abaci::utility::Complex;
+using abaci::utility::Operators;
+using abaci::utility::Operator;
 ```
 
 X3 rule declarations take two template parameters, the class type and the semantic type for the rule. The declaration rule `rule_1` must have a corresponding definition `rule_1_def` later in the implementation file in order to use it with `BOOST_SPIRIT_DEFINE()`. The rules related to expressions are listed first, many of which simply associate a token with an `abaci::utility::Operator`. The pairs of rules, such as `logic_and` and `logic_and_n`, are used to prevent flattening of an expression AST to a single array.
@@ -1222,6 +1369,9 @@ x3::rule<class data_value_call, DataCall> const data_value_call;
 x3::rule<class this_value_call, DataCall> const this_value_call;
 x3::rule<class data_method_call, MethodValueCall> const data_method_call;
 x3::rule<class this_method_call, MethodValueCall> const this_method_call;
+x3::rule<class user_input, UserInput> const user_input;
+x3::rule<class type_conversion_items, TypeConvItems> const type_conversion_items;
+x3::rule<class type_conversion, TypeConv> const type_conversion;
 ```
 
 Then come the rules related to statements, where the `_items` rules are described by a struct from `ast/Stmt.hpp` and the `_stmt` rules are of type `StmtNode` from the same header file.
@@ -1322,7 +1472,7 @@ auto makeBoolean = [](auto& ctx) {
 };
 ```
 
-Functions `makeString` and `makeVariable` construct a `String` and `Variable` from a string.
+Functions `makeString` and `makeVariable` construct a `String` and `Variable` from a string. Function `makeThisPtr()` makes a reserved name for the "this" pointer.
 
 ```cpp
 auto makeString = [](auto& ctx) {
@@ -1333,6 +1483,31 @@ auto makeString = [](auto& ctx) {
 auto makeVariable = [](auto& ctx){
     const std::string str = _attr(ctx);
     _val(ctx) = Variable(str);
+};
+
+auto makeThisPtr = [](auto& ctx){
+    _val(ctx) = Variable("_this");
+};
+```
+
+Making a `TypeConvItems` rule into a `TypeConv`, converting the literal string into an `AbaciValue::Type`, uses another `std::unordered_map` and function `makeConversion()`.
+
+```cpp
+std::unordered_map<std::string,AbaciValue::Type> type_conv{
+    { INT, AbaciValue::Integer },
+    { FLOAT, AbaciValue::Float },
+    { COMPLEX, AbaciValue::Complex },
+    { STR, AbaciValue::String },
+    { REAL, AbaciValue::Real },
+    { IMAG, AbaciValue::Imaginary }
+};
+
+auto makeConversion = [](auto& ctx){
+    const TypeConvItems& items = _attr(ctx);
+    auto iter = type_conv.find(items.to_type);
+    if (iter != type_conv.end()) {
+        _val(ctx) = TypeConv{ iter->second, std::shared_ptr<ExprNode>{ new ExprNode(items.expression) } };
+    }
 };
 ```
 
@@ -1419,18 +1594,22 @@ const auto from_def = string(FROM)[getOperator];
 const auto to_def = string(TO)[getOperator];
 ```
 
-Rules for UTF-8 identifiers as both variables and value call components come next (`call_args` is defined below).
+Rules for UTF-8 identifiers as both variables and value call, method call and type conversion components come next (`call_args` is defined below).
 
 ```cpp
 const auto identifier_def = lexeme[( ( char_('A', 'Z') | char_('a', 'z') | char_('\'') | char_('\200', '\377') )
     >> *( char_('A', 'Z') | char_('a', 'z') | char_('0', '9') | char_('_') | char_('\'') | char_('\200', '\377') ) ) - keywords];
 const auto variable_def = identifier[makeVariable];
-const auto this_ptr_def = string(THIS)[makeVariable];
+const auto this_ptr_def = lit(THIS)[makeThisPtr];
 const auto function_value_call_def = identifier >> call_args;
 const auto data_value_call_def = variable >> +( DOT >> variable );
 const auto this_value_call_def = this_ptr >> +( DOT >> variable );
 const auto data_method_call_def = variable >> DOT >> *( variable >> DOT ) >> identifier >> call_args;
 const auto this_method_call_def = this_ptr >> DOT >> *( variable >> DOT ) >> identifier >> call_args;
+const auto user_input_def = lit(INPUT);
+const auto type_conversion_items_def = ( string(INT) | string(FLOAT) | string(COMPLEX) | string(STR)
+    | string(REAL) | string(IMAG) ) >> LEFT_PAREN >> expression >> RIGHT_PAREN;
+const auto type_conversion_def = type_conversion_items[makeConversion];
 ```
 
 The rules for expressions come in pairs, for example `logic_and_n_def` and `logic_and_def` (the `_n` stands for "node"). They are listed in order of precedence from low to high, note that `primary_n_def` calls `logic_or[MakeNode<ExprNode::Boolean>()]` directly and not `expression` for its (recursive) parenthesised expression evaluation; the same rule matches object data extraction and method/function calls.
@@ -1460,15 +1639,15 @@ const auto unary_def = *( minus | logical_not | bitwise_compl ) >> index_n;
 const auto index_n_def = index[MakeNode<ExprNode::Right>()];
 const auto index_def = primary_n >> *( exponent >> unary_n );
 const auto primary_n_def = value[MakeNode<>()] | LEFT_PAREN >> logic_or[MakeNode<ExprNode::Boolean>()] >> RIGHT_PAREN
-    | function_value_call[MakeNode<>()] | this_method_call[MakeNode<>()] | data_method_call[MakeNode<>()] 
-    | this_value_call[MakeNode<>()] | data_value_call[MakeNode<>()] | variable[MakeNode<>()];
+    | type_conversion[MakeNode<>()] | function_value_call[MakeNode<>()] | this_method_call[MakeNode<>()] | data_method_call[MakeNode<>()] 
+    | this_value_call[MakeNode<>()] | data_value_call[MakeNode<>()] | user_input[MakeNode<>()] | variable[MakeNode<>()];
 ```
 
 The keywords are listed in order to disallow them as identifier names, note the first `lit(AND)` allows use of `|` with subsequent `const char *` items.
 
 ```cpp
-const auto keywords_def = lit(AND) | CASE | CLASS | ELSE | ENDCASE | ENDCLASS | ENDFN | ENDIF | ENDWHILE
-    | FALSE | FN | IF | LET | NIL | NOT | OR | PRINT | RETURN | THIS | TRUE | WHEN | WHILE;
+const auto keywords_def = lit(AND) | CASE | CLASS | COMPLEX | ELSE | ENDCASE | ENDCLASS | ENDFN | ENDIF | ENDWHILE
+    | FLOAT | FALSE | FN | IF | IMAG | INPUT | INT | LET | NIL | NOT | OR | PRINT | REAL | RETURN | STR | THIS | TRUE | WHEN | WHILE;
 ```
 
 Next are the statement rules themselves, which are what gives the reader (and parser function) an idea of the syntax of the Abaci0 language. All of the different values for rule definition `statement_def` are of type `StmtNode`, and hence all must make use of `MakeStmt<...Stmt>()` in order to appear to be the same type.
@@ -1600,7 +1779,7 @@ BOOST_SPIRIT_DEFINE(expression, logic_or, logic_and, logic_and_n,
     equality, equality_n, comparison, comparison_n,
     term, term_n, factor, factor_n, unary, unary_n, index, index_n, primary_n)
 BOOST_SPIRIT_DEFINE(identifier, variable, function_value_call, data_value_call, this_value_call,
-    data_method_call, this_method_call, keywords,
+    data_method_call, this_method_call, user_input, type_conversion_items, type_conversion, keywords,
     comment_items, comment, print_items, print_stmt,
     let_items, let_stmt, assign_items, assign_stmt, if_items, if_stmt,
     when_items, while_items, while_stmt, repeat_items, repeat_stmt, case_items, case_stmt,
@@ -1647,6 +1826,7 @@ This header file specifies all of the Abaci0 keywords and symbolic tokens. In or
 SYMBOL(AND, "and");
 SYMBOL(CASE, "case");
 SYMBOL(CLASS, "class");
+SYMBOL(COMPLEX, "complex");
 SYMBOL(ELSE, "else");
 SYMBOL(ENDCASE, "endcase");
 SYMBOL(ENDCLASS, "endclass");
@@ -1654,16 +1834,22 @@ SYMBOL(ENDFN, "endfn");
 SYMBOL(ENDIF, "endif");
 SYMBOL(ENDWHILE, "endwhile");
 SYMBOL(FALSE, "false");
+SYMBOL(FLOAT, "float");
 SYMBOL(FN, "fn");
 SYMBOL(IF, "if");
+SYMBOL(IMAG, "imag");
+SYMBOL(INPUT, "input");
+SYMBOL(INT, "int");
 SYMBOL(LET, "let");
 SYMBOL(NIL, "nil");
 SYMBOL(NOT, "not");
 SYMBOL(OR, "or");
 SYMBOL(PRINT, "print");
+SYMBOL(REAL, "real");
 SYMBOL(REM, "rem");
 SYMBOL(REPEAT, "repeat");
 SYMBOL(RETURN, "return");
+SYMBOL(STR, "str");
 SYMBOL(THIS, "this");
 SYMBOL(TRUE, "true");
 SYMBOL(UNTIL, "until");
@@ -1842,6 +2028,8 @@ using abaci::ast::ExprNode;
 using abaci::ast::ExprList;
 using abaci::ast::ValueCall;
 using abaci::ast::DataCall;
+using abaci::ast::UserInput;
+using abaci::ast::TypeConv;
 using abaci::ast::MethodValueCall;
 using abaci::utility::Operator;
 
@@ -2244,6 +2432,88 @@ Method calls reuse a significant amount of logic from both data member access an
             builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
             builder.CreateCall(module.getFunction("unsetThisPtr"), { typed_environment_ptr });
             environment->endDefineScope();
+            break;
+        }
+```
+
+To obtain user input the function `getUserInput()` is called with a single paramter of a `String` object, with its pointer member already allocated and length member set its initial allocated value. The length member is reset to the length of the input string by the called function, and the `String` object and type pushed to the stack.
+
+```cpp
+        case ExprNode::InputNode: {
+            ArrayType *str = ArrayType::get(builder.getInt8Ty(), UserInput::MAX_SIZE);
+            AllocaInst *ptr = builder.CreateAlloca(str, nullptr);
+            auto string_value = builder.CreateAlloca(jit.getNamedType("struct.String"));
+            auto len = ConstantInt::get(builder.getInt64Ty(), UserInput::MAX_SIZE);
+            builder.CreateStore(ptr, builder.CreateStructGEP(jit.getNamedType("struct.String"), string_value, 0));
+            builder.CreateStore(len, builder.CreateStructGEP(jit.getNamedType("struct.String"), string_value, 1));
+            builder.CreateCall(module.getFunction("getUserInput"), { string_value });
+            push({ string_value, AbaciValue::String });
+            break;
+        }
+```
+
+When a type conversion is encountered, the expression is evaluated by a new instantiation of `ExprCodeGen` and its value and type members are stored in a newly-allocated `AbaciValue` object. Another such object is created to hold the converted type and this is initialized with a newly-allocated `Complex` or `String` (with length field correctly set) sub-object as necessary. Function `convertType()` is called with the two `AbaciValue` pointers, and then the value member is extracted and typed (in a similar way as for dereferencing variables) before being pushed to the stack with the target type.
+
+```cpp
+        case ExprNode::ConvNode: {
+            const TypeConv& conversion = std::get<TypeConv>(node.get());
+            ExprCodeGen expr(jit);
+            expr(*(conversion.expression));
+            auto convert = expr.get();
+            auto convert_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
+            builder.CreateStore(convert.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), convert_value, 0));
+            builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(convert.second)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), convert_value, 1));
+            auto type = conversion.to_type;
+            auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
+            builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), type), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+            switch (type) {
+                case AbaciValue::Complex:
+                    builder.CreateStore(builder.CreateAlloca(jit.getNamedType("struct.Complex")), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
+                    break;
+                case AbaciValue::String: {
+                    Value *len;
+                    if (environmentTypeToType(convert.second) == AbaciValue::String) {
+                        Value *str = builder.CreateBitCast(convert.first, PointerType::get(jit.getNamedType("struct.String"), 0));
+                        len = builder.CreateLoad(builder.getInt64Ty(), builder.CreateStructGEP(jit.getNamedType("struct.String"), str, 1));
+                    }
+                    else {
+                        len = ConstantInt::get(builder.getInt64Ty(), TypeConv::MAX_SIZE);
+                    }
+                    AllocaInst *ptr = builder.CreateAlloca(builder.getInt8Ty(), len);
+                    auto string_value = builder.CreateAlloca(jit.getNamedType("struct.String"));
+                    builder.CreateStore(ptr, builder.CreateStructGEP(jit.getNamedType("struct.String"), string_value, 0));
+                    builder.CreateStore(len, builder.CreateStructGEP(jit.getNamedType("struct.String"), string_value, 1));
+                    builder.CreateStore(string_value, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
+                    break;
+                }
+                default:
+                    builder.CreateStore(ConstantInt::get(builder.getInt64Ty(), 0), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
+                    break;
+            }
+            builder.CreateCall(module.getFunction("convertType"), { abaci_value, convert_value });
+            Value *raw_value = builder.CreateLoad(builder.getInt64Ty(), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
+            Value *value;
+            switch (type) {
+                case AbaciValue::Integer:
+                    value = raw_value;
+                    break;
+                case AbaciValue::Real:
+                case AbaciValue::Imaginary:
+                    type = AbaciValue::Float;
+                    [[fallthrough]];
+                case AbaciValue::Float:
+                    value = builder.CreateBitCast(raw_value, builder.getDoubleTy());
+                    break;
+                case AbaciValue::Complex:
+                    value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.Complex"), 0));
+                    break;
+                case AbaciValue::String:
+                    value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.String"), 0));
+                    break;
+                default:
+                    UnexpectedError("Bad type for conversion.");
+            }
+            push({ value, type });
             break;
         }
 ```
@@ -3416,6 +3686,7 @@ namespace abaci::codegen {
 The layout of `TypeEvalGen::operator()` exactly matches that for class `ExprCodeGen`.
 
 ```cpp
+using abaci::ast::Class;
 using abaci::ast::DataAssignStmt;
 using abaci::ast::MethodCall;
 using abaci::ast::ExpressionStmt;
@@ -3518,7 +3789,7 @@ A method call is evaluated to determine its object and return types, creating a 
             }
             auto current_scope = environment->getCurrentDefineScope();
             environment->beginDefineScope(environment->getGlobalDefineScope());
-            environment->getCurrentDefineScope()->setType(THIS, type);
+            environment->getCurrentDefineScope()->setType("_this", type);
             for (auto arg_type = types.begin(); const auto& parameter : cache_function.parameters) {
                 auto type = *arg_type++;
                 if (std::holds_alternative<AbaciValue::Type>(type)) {
@@ -3552,6 +3823,17 @@ Access to data members inspects the instantiation type for the object and return
             push(type);
             break;
         }
+```
+
+User input and type conversions are handled with `InputNode` and `ConvNode`, pushing the type to be obtained to the stack.
+
+```cpp
+        case ExprNode::InputNode:
+            push(AbaciValue::String);
+            break;
+        case ExprNode::ConvNode:
+            push(std::get<TypeConv>(node.get()).to_type);
+            break;
 ```
 
 Implicit promotions based upon `Operator` types are handled for `ListNode`.
@@ -3915,7 +4197,7 @@ void TypeCodeGen::codeGen(const MethodCall& method_call) const {
     }
     auto current_scope = environment->getCurrentDefineScope();
     environment->beginDefineScope(environment->getGlobalDefineScope());
-    environment->getCurrentDefineScope()->setType(THIS, type);
+    environment->getCurrentDefineScope()->setType("_this", type);
     for (auto arg_type = types.begin(); const auto& parameter : cache_function.parameters) {
         auto type = *arg_type++;
         if (std::holds_alternative<AbaciValue::Type>(type)) {
@@ -4309,6 +4591,10 @@ void JIT::initialize() {
     Function::Create(set_this_ptr_type, Function::ExternalLinkage, "setThisPtr", module.get());
     FunctionType *unset_this_ptr_type = FunctionType::get(builder.getVoidTy(), { PointerType::get(environment_type, 0) }, false);
     Function::Create(unset_this_ptr_type, Function::ExternalLinkage, "unsetThisPtr", module.get());
+    FunctionType *get_user_input_type = FunctionType::get(builder.getVoidTy(), { PointerType::get(string_type, 0) }, false);
+    Function::Create(get_user_input_type, Function::ExternalLinkage, "getUserInput", module.get());
+    FunctionType *convert_type_type = FunctionType::get(builder.getVoidTy(), { PointerType::get(abaci_value_type, 0), PointerType::get(abaci_value_type, 0) }, false);
+    Function::Create(convert_type_type, Function::ExternalLinkage, "convertType", module.get());
     for (const auto& instantiation : cache->getInstantiations()) {
         std::string function_name{ mangled(instantiation.name, instantiation.parameter_types) };
         FunctionType *inst_func_type = FunctionType::get(builder.getVoidTy(), {}, false);
@@ -4376,7 +4662,9 @@ ExecFunctionType JIT::getExecFunction() {
             {(*jit)->getExecutionSession().intern("beginScope"), { reinterpret_cast<uintptr_t>(&beginScope), JITSymbolFlags::Exported }},
             {(*jit)->getExecutionSession().intern("endScope"), { reinterpret_cast<uintptr_t>(&endScope), JITSymbolFlags::Exported }},
             {(*jit)->getExecutionSession().intern("setThisPtr"), { reinterpret_cast<uintptr_t>(&setThisPtr), JITSymbolFlags::Exported }},
-            {(*jit)->getExecutionSession().intern("unsetThisPtr"), { reinterpret_cast<uintptr_t>(&unsetThisPtr), JITSymbolFlags::Exported }}
+            {(*jit)->getExecutionSession().intern("unsetThisPtr"), { reinterpret_cast<uintptr_t>(&unsetThisPtr), JITSymbolFlags::Exported }},
+            {(*jit)->getExecutionSession().intern("getUserInput"), { reinterpret_cast<uintptr_t>(&getUserInput), JITSymbolFlags::Exported }},
+            {(*jit)->getExecutionSession().intern("convertType"), { reinterpret_cast<uintptr_t>(&convertType), JITSymbolFlags::Exported }}
             }))) {
         handleAllErrors(std::move(err), [&](ErrorInfoBase& eib) {
             errs() << "Error: " << eib.message() << '\n';
@@ -4402,7 +4690,7 @@ The main program contained in this file is not intended to be fully-featured, bu
 In the case of a single program argument (`./abaci0 script.abaci`), this file is read in one go before `ast`, `environment` and `functions` are created (as empty). The call to `parse_block()` returns `true` if successful, causing use of class `TypeCodeGen` over the whole program. If no errors are caused by this stage, `jit` and `code_gen` are created and the resulting `programFunc` is called before the main program exits. Syntax errors cause the message `"Could not parse file."`, while other errors would result in exceptions being thrown; if errors are caught, the main program exits with a non-zero failure code.
 
 ```cpp
-const std::string version = "0.9.1 (2024-May-22)";
+const std::string version = "0.9.2 (2024-May-25)";
 
 int main(const int argc, const char **argv) {
     if (argc == 2) {

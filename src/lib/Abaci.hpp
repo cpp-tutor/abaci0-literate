@@ -30,6 +30,10 @@ void setThisPtr(abaci::utility::Environment *environment, abaci::utility::AbaciV
 
 void unsetThisPtr(abaci::utility::Environment *environment);
 
+void getUserInput(abaci::utility::String *str);
+
+void convertType(abaci::utility::AbaciValue *to, abaci::utility::AbaciValue *from);
+
 }
 
 #endif

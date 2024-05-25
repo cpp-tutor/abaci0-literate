@@ -62,6 +62,10 @@ void JIT::initialize() {
     Function::Create(set_this_ptr_type, Function::ExternalLinkage, "setThisPtr", module.get());
     FunctionType *unset_this_ptr_type = FunctionType::get(builder.getVoidTy(), { PointerType::get(environment_type, 0) }, false);
     Function::Create(unset_this_ptr_type, Function::ExternalLinkage, "unsetThisPtr", module.get());
+    FunctionType *get_user_input_type = FunctionType::get(builder.getVoidTy(), { PointerType::get(string_type, 0) }, false);
+    Function::Create(get_user_input_type, Function::ExternalLinkage, "getUserInput", module.get());
+    FunctionType *convert_type_type = FunctionType::get(builder.getVoidTy(), { PointerType::get(abaci_value_type, 0), PointerType::get(abaci_value_type, 0) }, false);
+    Function::Create(convert_type_type, Function::ExternalLinkage, "convertType", module.get());
     for (const auto& instantiation : cache->getInstantiations()) {
         std::string function_name{ mangled(instantiation.name, instantiation.parameter_types) };
         FunctionType *inst_func_type = FunctionType::get(builder.getVoidTy(), {}, false);
@@ -125,7 +129,9 @@ ExecFunctionType JIT::getExecFunction() {
             {(*jit)->getExecutionSession().intern("beginScope"), { reinterpret_cast<uintptr_t>(&beginScope), JITSymbolFlags::Exported }},
             {(*jit)->getExecutionSession().intern("endScope"), { reinterpret_cast<uintptr_t>(&endScope), JITSymbolFlags::Exported }},
             {(*jit)->getExecutionSession().intern("setThisPtr"), { reinterpret_cast<uintptr_t>(&setThisPtr), JITSymbolFlags::Exported }},
-            {(*jit)->getExecutionSession().intern("unsetThisPtr"), { reinterpret_cast<uintptr_t>(&unsetThisPtr), JITSymbolFlags::Exported }}
+            {(*jit)->getExecutionSession().intern("unsetThisPtr"), { reinterpret_cast<uintptr_t>(&unsetThisPtr), JITSymbolFlags::Exported }},
+            {(*jit)->getExecutionSession().intern("getUserInput"), { reinterpret_cast<uintptr_t>(&getUserInput), JITSymbolFlags::Exported }},
+            {(*jit)->getExecutionSession().intern("convertType"), { reinterpret_cast<uintptr_t>(&convertType), JITSymbolFlags::Exported }}
             }))) {
         handleAllErrors(std::move(err), [&](ErrorInfoBase& eib) {
             errs() << "Error: " << eib.message() << '\n';

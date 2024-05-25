@@ -1,8 +1,6 @@
 #include "Utility.hpp"
 #include "Report.hpp"
 #include "parser/Keywords.hpp"
-#include <iomanip>
-#include <algorithm>
 
 namespace abaci::utility {
 
@@ -101,32 +99,3 @@ Object::~Object() {
 }
 
 } // namespace abaci::utility
-
-std::ostream& operator<<(std::ostream& os, const abaci::utility::AbaciValue& value) {
-    using abaci::utility::AbaciValue;
-    switch (value.type) {
-        case AbaciValue::Nil:
-            return os << NIL;
-        case AbaciValue::Boolean:
-            return os << (value.value.boolean ? TRUE : FALSE);
-        case AbaciValue::Integer:
-            return os << static_cast<long long>(value.value.integer);
-        case AbaciValue::Float:
-            return os << std::setprecision(10) << value.value.floating;
-        case AbaciValue::Complex:
-            return os << value.value.complex->real << (value.value.complex->imag >= 0 ? "+" : "") << value.value.complex->imag << IMAGINARY;
-        case AbaciValue::String:
-            return os.write(reinterpret_cast<const char*>(value.value.str->ptr), value.value.str->len);
-        default:
-            return os << value.type << '?';
-    }
-}
-
-std::ostream& operator<<(std::ostream& os, const abaci::utility::Operator op) {
-    for (const auto& item : abaci::utility::Operators) {
-        if (item.second == op) {
-            return os << '(' << item.first << ')';
-        }
-    }
-    return os << "(?)";
-}

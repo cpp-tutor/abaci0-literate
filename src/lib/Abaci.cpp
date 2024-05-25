@@ -1,11 +1,15 @@
 #include "Abaci.hpp"
 #include "utility/Report.hpp"
 #include "parser/Keywords.hpp"
+#include <charconv>
 #include <complex>
+#include <string>
 #include <cstring>
+#include <cstdio>
 #include <fmt/core.h>
 #include <fmt/format.h>
 using fmt::print;
+using fmt::format;
 
 using abaci::utility::AbaciValue;
 using abaci::utility::Complex;
@@ -100,7 +104,7 @@ AbaciValue *getVariable(Environment *environment, char *name) {
 }
 
 void setObjectData(Environment *environment, char *name, int *indices, AbaciValue *value) {
-    auto data = (strcmp(name, THIS) == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
+    auto data = (strcmp(name, "_this") == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
     while (*indices != -1) {
         data = &data->value.object->variables[*indices];
         ++indices;
@@ -109,7 +113,7 @@ void setObjectData(Environment *environment, char *name, int *indices, AbaciValu
 }
 
 AbaciValue *getObjectData(Environment *environment, char *name, int *indices) {
-    auto data = (strcmp(name, THIS) == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
+    auto data = (strcmp(name, "_this") == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
     while (*indices != -1) {
         data = &data->value.object->variables[*indices];
         ++indices;
@@ -129,6 +133,168 @@ void setThisPtr(Environment *environment, AbaciValue *ptr) {
     environment->setThisPtr(ptr);
 }
 
-void unsetThisPtr(abaci::utility::Environment *environment) {
+void unsetThisPtr(Environment *environment) {
     environment->unsetThisPtr();
+}
+
+void getUserInput(String *str) {
+    fgets(reinterpret_cast<char*>(str->ptr), str->len, stdin);
+    str->len = strlen(reinterpret_cast<char*>(str->ptr));
+    if (*(str->ptr + str->len - 1) == '\n') {
+        --str->len;
+    }
+    fflush(stdin);
+}
+
+void convertType(AbaciValue *to, AbaciValue *from) {
+    switch (to->type) {
+        case AbaciValue::Integer:
+            switch(from->type) {
+                case AbaciValue::Boolean:
+                    to->value.integer = static_cast<long long>(from->value.boolean);
+                    break;
+                case AbaciValue::Integer:
+                    to->value.integer = from->value.integer;
+                    break;
+                case AbaciValue::Float:
+                    to->value.integer = static_cast<long long>(from->value.floating);
+                    break;
+                case AbaciValue::String: {
+                    auto *str = reinterpret_cast<const char*>(from->value.str->ptr);
+                    if (strncmp(HEX_PREFIX, str, strlen(HEX_PREFIX)) == 0) {
+                        std::from_chars(str + strlen(HEX_PREFIX), str + from->value.str->len, to->value.integer, 16);
+                    }
+                    else if (strncmp(BIN_PREFIX, str, strlen(BIN_PREFIX)) == 0) {
+                        std::from_chars(str + strlen(BIN_PREFIX), str + from->value.str->len, to->value.integer, 2);
+                    }
+                    else if (strncmp(OCT_PREFIX, str, strlen(OCT_PREFIX)) == 0) {
+                        std::from_chars(str + strlen(OCT_PREFIX), str + from->value.str->len, to->value.integer, 8);
+                    }
+                    else {
+                        std::from_chars(str, str + from->value.str->len, to->value.integer, 10);
+                    }
+                    break;
+                }
+                default:
+                    LogicError("Bad type(s) for conversion.");
+            }
+            break;
+        case AbaciValue::Float:
+            switch(from->type) {
+                case AbaciValue::Boolean:
+                    to->value.floating = static_cast<double>(from->value.boolean);
+                    break;
+                case AbaciValue::Integer:
+                    to->value.floating = static_cast<double>(from->value.integer);
+                    break;
+                case AbaciValue::Float:
+                    to->value.floating = from->value.floating;
+                    break;
+                case AbaciValue::String: {
+                    auto *str = reinterpret_cast<const char*>(from->value.str->ptr);
+                    std::from_chars(str, str + from->value.str->len, to->value.floating);
+                    break;
+                }
+                default:
+                    LogicError("Bad type(s) for conversion.");
+            }
+            break;
+        case AbaciValue::Complex:
+            switch(from->type) {
+                case AbaciValue::Boolean:
+                    to->value.complex->real = static_cast<double>(from->value.boolean);
+                    to->value.complex->imag = 0.0;
+                    break;
+                case AbaciValue::Integer:
+                    to->value.complex->real = static_cast<double>(from->value.integer);
+                    to->value.complex->imag = 0.0;
+                    break;
+                case AbaciValue::Float:
+                    to->value.complex->real = from->value.floating;
+                    to->value.complex->imag = 0.0;
+                    break;
+                case AbaciValue::String: {
+                    auto *str = reinterpret_cast<const char*>(from->value.str->ptr);
+                    double d;
+                    auto [ ptr, ec ] = std::from_chars(str, str + from->value.str->len, d);
+                    if (strncmp(ptr, IMAGINARY, strlen(IMAGINARY)) == 0) {
+                        to->value.complex->real = 0;
+                        to->value.complex->imag = d;
+                    }
+                    else if (*ptr) {
+                        to->value.complex->real = d;
+                        if (*ptr == '+') {
+                            ++ptr;
+                        }
+                        std::from_chars(ptr, str + from->value.str->len, d);
+                        to->value.complex->imag = d;
+                    }
+                    else {
+                        to->value.complex->real = d;
+                        to->value.complex->imag = 0;
+                    }
+                    break;
+                }
+                case AbaciValue::Complex:
+                    to->value.complex->real = from->value.complex->real;
+                    to->value.complex->imag = from->value.complex->imag;
+                    break;
+                default:
+                    LogicError("Bad type(s) for conversion.");
+            }
+            break;
+        case AbaciValue::String: {
+            std::string str;
+            switch (from->type) {
+                case AbaciValue::Boolean:
+                    str = format("{}", from->value.boolean ? TRUE : FALSE);
+                    break;
+                case AbaciValue::Integer:
+                    str = format("{}", static_cast<long long>(from->value.integer));
+                    break;
+                case AbaciValue::Float:
+                    str = format("{:.10g}", from->value.floating);
+                    break;
+                case AbaciValue::Complex:
+                    str = format("{:.10g}", from->value.complex->real);
+                    if (from->value.complex->imag != 0) {
+                        str.append(format("{:+.10g}{}", from->value.complex->imag, IMAGINARY));
+                    }
+                    break;
+                case AbaciValue::String:
+                    str.assign(reinterpret_cast<const char*>(from->value.str->ptr), from->value.str->len);
+                    break;
+                default:
+                    LogicError("Bad type(s) for conversion.");
+            }
+            char *ptr = reinterpret_cast<char*>(to->value.str->ptr);
+            if (str.size() < to->value.str->len) {
+                to->value.str->len = str.size();
+            }
+            strncpy(ptr, str.c_str(), to->value.str->len);
+            break;
+        }
+        case AbaciValue::Real:
+            switch(from->type) {
+                case AbaciValue::Complex:
+                    to->value.floating = from->value.complex->real;
+                    to->type = AbaciValue::Float;
+                    break;
+                default:
+                    LogicError("Must be complex type.");
+            }
+            break;
+        case AbaciValue::Imaginary:
+            switch(from->type) {
+                case AbaciValue::Complex:
+                    to->value.floating = from->value.complex->imag;
+                    to->type = AbaciValue::Float;
+                    break;
+                default:
+                    LogicError("Must be complex type.");
+            }
+            break;
+        default:
+            UnexpectedError("Bad target conversion type.")
+    }
 }

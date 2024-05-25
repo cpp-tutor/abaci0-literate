@@ -52,7 +52,7 @@ public:
 };
 
 struct AbaciValue {
-    enum Type { Nil, Boolean, Integer, Float, Complex, String, Object, TypeMask = 15, Constant = 16, Unset = 127 };
+    enum Type { Nil, Boolean, Integer, Float, Complex, String, Object, TypeMask = 15, Constant = 16, Real = 98, Imaginary, Unset = 127 };
     union {
         void *nil{ nullptr };
         bool boolean;
@@ -87,16 +87,5 @@ enum class Operator { None, Plus, Minus, Times, Divide, Modulo, FloorDivide, Exp
 extern const std::unordered_map<std::string,Operator> Operators;
 
 } // namespace abaci::utility
-
-std::ostream& operator<<(std::ostream& os, const abaci::utility::AbaciValue&);
-
-std::ostream& operator<<(std::ostream& os, const abaci::utility::Operator);
-
-template<typename T>
-std::string toString(const T& value) {
-    std::ostringstream oss;
-    oss << value;
-    return oss.str();
-}
 
 #endif

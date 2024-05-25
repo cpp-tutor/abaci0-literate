@@ -13,6 +13,8 @@ using abaci::ast::ExprNode;
 using abaci::ast::ExprList;
 using abaci::ast::ValueCall;
 using abaci::ast::DataCall;
+using abaci::ast::UserInput;
+using abaci::ast::TypeConv;
 using abaci::ast::MethodValueCall;
 using abaci::utility::Operator;
 
@@ -385,6 +387,78 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
             builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
             builder.CreateCall(module.getFunction("unsetThisPtr"), { typed_environment_ptr });
             environment->endDefineScope();
+            break;
+        }
+        case ExprNode::InputNode: {
+            ArrayType *str = ArrayType::get(builder.getInt8Ty(), UserInput::MAX_SIZE);
+            AllocaInst *ptr = builder.CreateAlloca(str, nullptr);
+            auto string_value = builder.CreateAlloca(jit.getNamedType("struct.String"));
+            auto len = ConstantInt::get(builder.getInt64Ty(), UserInput::MAX_SIZE);
+            builder.CreateStore(ptr, builder.CreateStructGEP(jit.getNamedType("struct.String"), string_value, 0));
+            builder.CreateStore(len, builder.CreateStructGEP(jit.getNamedType("struct.String"), string_value, 1));
+            builder.CreateCall(module.getFunction("getUserInput"), { string_value });
+            push({ string_value, AbaciValue::String });
+            break;
+        }
+        case ExprNode::ConvNode: {
+            const TypeConv& conversion = std::get<TypeConv>(node.get());
+            ExprCodeGen expr(jit);
+            expr(*(conversion.expression));
+            auto convert = expr.get();
+            auto convert_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
+            builder.CreateStore(convert.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), convert_value, 0));
+            builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(convert.second)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), convert_value, 1));
+            auto type = conversion.to_type;
+            auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
+            builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), type), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 1));
+            switch (type) {
+                case AbaciValue::Complex:
+                    builder.CreateStore(builder.CreateAlloca(jit.getNamedType("struct.Complex")), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
+                    break;
+                case AbaciValue::String: {
+                    Value *len;
+                    if (environmentTypeToType(convert.second) == AbaciValue::String) {
+                        Value *str = builder.CreateBitCast(convert.first, PointerType::get(jit.getNamedType("struct.String"), 0));
+                        len = builder.CreateLoad(builder.getInt64Ty(), builder.CreateStructGEP(jit.getNamedType("struct.String"), str, 1));
+                    }
+                    else {
+                        len = ConstantInt::get(builder.getInt64Ty(), TypeConv::MAX_SIZE);
+                    }
+                    AllocaInst *ptr = builder.CreateAlloca(builder.getInt8Ty(), len);
+                    auto string_value = builder.CreateAlloca(jit.getNamedType("struct.String"));
+                    builder.CreateStore(ptr, builder.CreateStructGEP(jit.getNamedType("struct.String"), string_value, 0));
+                    builder.CreateStore(len, builder.CreateStructGEP(jit.getNamedType("struct.String"), string_value, 1));
+                    builder.CreateStore(string_value, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
+                    break;
+                }
+                default:
+                    builder.CreateStore(ConstantInt::get(builder.getInt64Ty(), 0), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
+                    break;
+            }
+            builder.CreateCall(module.getFunction("convertType"), { abaci_value, convert_value });
+            Value *raw_value = builder.CreateLoad(builder.getInt64Ty(), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
+            Value *value;
+            switch (type) {
+                case AbaciValue::Integer:
+                    value = raw_value;
+                    break;
+                case AbaciValue::Real:
+                case AbaciValue::Imaginary:
+                    type = AbaciValue::Float;
+                    [[fallthrough]];
+                case AbaciValue::Float:
+                    value = builder.CreateBitCast(raw_value, builder.getDoubleTy());
+                    break;
+                case AbaciValue::Complex:
+                    value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.Complex"), 0));
+                    break;
+                case AbaciValue::String:
+                    value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.String"), 0));
+                    break;
+                default:
+                    UnexpectedError("Bad type for conversion.");
+            }
+            push({ value, type });
             break;
         }
         case ExprNode::ListNode: {

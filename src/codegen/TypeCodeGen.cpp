@@ -1,6 +1,5 @@
 #include "CodeGen.hpp"
 #include "utility/Utility.hpp"
-#include "parser/Keywords.hpp"
 #include <llvm/IR/Constants.h>
 
 using namespace llvm;
@@ -10,6 +9,7 @@ namespace abaci::codegen {
 using abaci::ast::ValueCall;
 using abaci::ast::DataCall;
 using abaci::ast::MethodValueCall;
+using abaci::ast::TypeConv;
 using abaci::ast::ExprNode;
 using abaci::ast::ExprList;
 using abaci::ast::PrintList;
@@ -117,7 +117,7 @@ void TypeEvalGen::operator()(const abaci::ast::ExprNode& node) const {
             }
             auto current_scope = environment->getCurrentDefineScope();
             environment->beginDefineScope(environment->getGlobalDefineScope());
-            environment->getCurrentDefineScope()->setType(THIS, type);
+            environment->getCurrentDefineScope()->setType("_this", type);
             for (auto arg_type = types.begin(); const auto& parameter : cache_function.parameters) {
                 auto type = *arg_type++;
                 if (std::holds_alternative<AbaciValue::Type>(type)) {
@@ -146,6 +146,12 @@ void TypeEvalGen::operator()(const abaci::ast::ExprNode& node) const {
             push(type);
             break;
         }
+        case ExprNode::InputNode:
+            push(AbaciValue::String);
+            break;
+        case ExprNode::ConvNode:
+            push(std::get<TypeConv>(node.get()).to_type);
+            break;
         case ExprNode::ListNode: {
             switch (node.getAssociation()) {
                 case ExprNode::Left: {
@@ -464,7 +470,7 @@ void TypeCodeGen::codeGen(const MethodCall& method_call) const {
     }
     auto current_scope = environment->getCurrentDefineScope();
     environment->beginDefineScope(environment->getGlobalDefineScope());
-    environment->getCurrentDefineScope()->setType(THIS, type);
+    environment->getCurrentDefineScope()->setType("_this", type);
     for (auto arg_type = types.begin(); const auto& parameter : cache_function.parameters) {
         auto type = *arg_type++;
         if (std::holds_alternative<AbaciValue::Type>(type)) {

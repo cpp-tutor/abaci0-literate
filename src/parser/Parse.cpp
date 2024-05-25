@@ -28,6 +28,9 @@ using abaci::ast::ExprList;
 using abaci::ast::ValueCall;
 using abaci::ast::DataCall;
 using abaci::ast::MethodValueCall;
+using abaci::ast::UserInput;
+using abaci::ast::TypeConvItems;
+using abaci::ast::TypeConv;
 using abaci::ast::StmtNode;
 using abaci::ast::StmtList;
 using abaci::ast::CommentStmt;
@@ -110,6 +113,9 @@ x3::rule<class data_value_call, DataCall> const data_value_call;
 x3::rule<class this_value_call, DataCall> const this_value_call;
 x3::rule<class data_method_call, MethodValueCall> const data_method_call;
 x3::rule<class this_method_call, MethodValueCall> const this_method_call;
+x3::rule<class user_input, UserInput> const user_input;
+x3::rule<class type_conversion_items, TypeConvItems> const type_conversion_items;
+x3::rule<class type_conversion, TypeConv> const type_conversion;
 
 x3::rule<class comment_items, CommentStmt> const comment_items;
 x3::rule<class comment, StmtNode> const comment;
@@ -201,6 +207,27 @@ auto makeVariable = [](auto& ctx){
     _val(ctx) = Variable(str);
 };
 
+auto makeThisPtr = [](auto& ctx){
+    _val(ctx) = Variable("_this");
+};
+
+std::unordered_map<std::string,AbaciValue::Type> type_conv{
+    { INT, AbaciValue::Integer },
+    { FLOAT, AbaciValue::Float },
+    { COMPLEX, AbaciValue::Complex },
+    { STR, AbaciValue::String },
+    { REAL, AbaciValue::Real },
+    { IMAG, AbaciValue::Imaginary }
+};
+
+auto makeConversion = [](auto& ctx){
+    const TypeConvItems& items = _attr(ctx);
+    auto iter = type_conv.find(items.to_type);
+    if (iter != type_conv.end()) {
+        _val(ctx) = TypeConv{ iter->second, std::shared_ptr<ExprNode>{ new ExprNode(items.expression) } };
+    }
+};
+
 template<size_t Ty = ExprNode::Unset>
 struct MakeNode {
     template<typename Context>
@@ -267,12 +294,16 @@ const auto to_def = string(TO)[getOperator];
 const auto identifier_def = lexeme[( ( char_('A', 'Z') | char_('a', 'z') | char_('\'') | char_('\200', '\377') )
     >> *( char_('A', 'Z') | char_('a', 'z') | char_('0', '9') | char_('_') | char_('\'') | char_('\200', '\377') ) ) - keywords];
 const auto variable_def = identifier[makeVariable];
-const auto this_ptr_def = string(THIS)[makeVariable];
+const auto this_ptr_def = lit(THIS)[makeThisPtr];
 const auto function_value_call_def = identifier >> call_args;
 const auto data_value_call_def = variable >> +( DOT >> variable );
 const auto this_value_call_def = this_ptr >> +( DOT >> variable );
 const auto data_method_call_def = variable >> DOT >> *( variable >> DOT ) >> identifier >> call_args;
 const auto this_method_call_def = this_ptr >> DOT >> *( variable >> DOT ) >> identifier >> call_args;
+const auto user_input_def = lit(INPUT);
+const auto type_conversion_items_def = ( string(INT) | string(FLOAT) | string(COMPLEX) | string(STR)
+    | string(REAL) | string(IMAG) ) >> LEFT_PAREN >> expression >> RIGHT_PAREN;
+const auto type_conversion_def = type_conversion_items[makeConversion];
 
 const auto expression_def = logic_or[MakeNode<ExprNode::Boolean>()];
 const auto logic_or_def = logic_and_n >> *( logical_or >> logic_and_n );
@@ -298,11 +329,11 @@ const auto unary_def = *( minus | logical_not | bitwise_compl ) >> index_n;
 const auto index_n_def = index[MakeNode<ExprNode::Right>()];
 const auto index_def = primary_n >> *( exponent >> unary_n );
 const auto primary_n_def = value[MakeNode<>()] | LEFT_PAREN >> logic_or[MakeNode<ExprNode::Boolean>()] >> RIGHT_PAREN
-    | function_value_call[MakeNode<>()] | this_method_call[MakeNode<>()] | data_method_call[MakeNode<>()] 
-    | this_value_call[MakeNode<>()] | data_value_call[MakeNode<>()] | variable[MakeNode<>()];
+    | type_conversion[MakeNode<>()] | function_value_call[MakeNode<>()] | this_method_call[MakeNode<>()] | data_method_call[MakeNode<>()] 
+    | this_value_call[MakeNode<>()] | data_value_call[MakeNode<>()] | user_input[MakeNode<>()] | variable[MakeNode<>()];
 
-const auto keywords_def = lit(AND) | CASE | CLASS | ELSE | ENDCASE | ENDCLASS | ENDFN | ENDIF | ENDWHILE
-    | FALSE | FN | IF | LET | NIL | NOT | OR | PRINT | RETURN | THIS | TRUE | WHEN | WHILE;
+const auto keywords_def = lit(AND) | CASE | CLASS | COMPLEX | ELSE | ENDCASE | ENDCLASS | ENDFN | ENDIF | ENDWHILE
+    | FLOAT | FALSE | FN | IF | IMAG | INPUT | INT | LET | NIL | NOT | OR | PRINT | REAL | RETURN | STR | THIS | TRUE | WHEN | WHILE;
 
 const auto comment_items_def = *(char_ - '\n');
 const auto comment_def = REM >> comment_items[MakeStmt<CommentStmt>()];
@@ -362,7 +393,7 @@ BOOST_SPIRIT_DEFINE(expression, logic_or, logic_and, logic_and_n,
     equality, equality_n, comparison, comparison_n,
     term, term_n, factor, factor_n, unary, unary_n, index, index_n, primary_n)
 BOOST_SPIRIT_DEFINE(identifier, variable, function_value_call, data_value_call, this_value_call,
-    data_method_call, this_method_call, keywords,
+    data_method_call, this_method_call, user_input, type_conversion_items, type_conversion, keywords,
     comment_items, comment, print_items, print_stmt,
     let_items, let_stmt, assign_items, assign_stmt, if_items, if_stmt,
     when_items, while_items, while_stmt, repeat_items, repeat_stmt, case_items, case_stmt,

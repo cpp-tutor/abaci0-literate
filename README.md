@@ -54,6 +54,8 @@ Numerous things to add before a 1.0.0 release. Please raise issues or pull reque
 
 * **0.9.1** (2024-May-22) Fixes for VS2022, improved name mangling, self-assignment.
 
+* **0.9.2** (2024-May-25) User input and type conversions.
+
 ## License
 
 All writing and source code released under a Creative Commmons License, &copy;2023-24 Richard Spencer

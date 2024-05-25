@@ -6,6 +6,7 @@
 #include <vector>
 #include <variant>
 #include <utility>
+#include <memory>
 
 namespace abaci::ast {
 
@@ -34,10 +35,21 @@ struct MethodValueCall {
     ExprList args;
 };
 
+struct UserInput {
+    inline const static int MAX_SIZE = 256;
+    std::string dummy;
+};
+
+struct TypeConv {
+    inline const static int MAX_SIZE = 32;
+    AbaciValue::Type to_type;
+    std::shared_ptr<ExprNode> expression;
+};
+
 class ExprNode {
 public:
     enum Association { Unset, Left, Right, Unary, Boolean };
-    enum Type { ValueNode, OperatorNode, ListNode, VariableNode, CallNode, DataNode, MethodNode };
+    enum Type { ValueNode, OperatorNode, ListNode, VariableNode, CallNode, DataNode, MethodNode, InputNode, ConvNode };
     ExprNode() = default;
     ExprNode(const ExprNode&) = default;
     ExprNode& operator=(const ExprNode&) = default;
@@ -48,8 +60,13 @@ public:
     Association getAssociation() const { return association; }
     const auto& get() const { return data; }
 private:
-    std::variant<AbaciValue,Operator,ExprList,Variable,ValueCall,DataCall,MethodValueCall> data;
+    std::variant<AbaciValue,Operator,ExprList,Variable,ValueCall,DataCall,MethodValueCall,UserInput,TypeConv> data;
     Association association{ Unset };
+};
+
+struct TypeConvItems {
+    std::string to_type;
+    ExprNode expression;
 };
 
 } // namespace abaci::ast
@@ -57,5 +74,7 @@ private:
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::ValueCall, name, args)
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::DataCall, name, member_list)
 BOOST_FUSION_ADAPT_STRUCT(abaci::ast::MethodValueCall, name, member_list, method, args)
+BOOST_FUSION_ADAPT_STRUCT(abaci::ast::UserInput, dummy)
+BOOST_FUSION_ADAPT_STRUCT(abaci::ast::TypeConvItems, to_type, expression)
 
 #endif
