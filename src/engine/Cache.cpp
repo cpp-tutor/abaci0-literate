@@ -1,6 +1,7 @@
 #include "Cache.hpp"
 #include "codegen/CodeGen.hpp"
 #include "utility/Report.hpp"
+#include "parser/Messages.hpp"
 #include <algorithm>
 
 namespace abaci::engine {
@@ -13,7 +14,7 @@ void Cache::addClassTemplate(const std::string& name, const std::vector<Variable
         classes.insert({ name, { variables, methods }});
     }
     else {
-        UnexpectedError("Class already exists.");
+        LogicError1(ClassExists, name);
     }
 }
 
@@ -23,7 +24,7 @@ void Cache::addFunctionTemplate(const std::string& name, const std::vector<Varia
         functions.insert({ name, { parameters, body }});
     }
     else {
-        UnexpectedError("Function already defined.");
+        LogicError1(FuncExists, name);
     }
 }
 
@@ -54,11 +55,11 @@ void Cache::addFunctionInstantiation(const std::string& name, const std::vector<
             }
         }
         else {
-            LogicError("Wrong number of arguments.");
+            LogicError2(WrongArgs, types.size(), iter->second.parameters.size());
         }
     }
     else {
-        LogicError("No such function.");
+        LogicError1(FuncNotExist, name);
     }
 }
 
@@ -69,7 +70,7 @@ Environment::DefineScope::Type Cache::getFunctionInstantiationType(const std::st
             return instantiation.return_type;
         }
     }
-    UnexpectedError("No such function instantiation.");
+    UnexpectedError1(NoInst, name);
 }
 
 std::shared_ptr<Environment::DefineScope> Cache::getFunctionInstantiationScope(const std::string& name, const std::vector<Environment::DefineScope::Type>& types) const {
@@ -79,7 +80,7 @@ std::shared_ptr<Environment::DefineScope> Cache::getFunctionInstantiationScope(c
             return instantiation.scope;
         }
     }
-    UnexpectedError("No such function instantiation.");
+    UnexpectedError1(NoInst, name);
 }
 
 const Cache::Function& Cache::getFunction(const std::string& name) const {
@@ -87,7 +88,7 @@ const Cache::Function& Cache::getFunction(const std::string& name) const {
     if (iter != functions.end()) {
         return iter->second;
     }
-    UnexpectedError("No such function.");
+    UnexpectedError1(FuncNotExist, name);
 }
 
 const Cache::Class& Cache::getClass(const std::string& name) const {
@@ -95,7 +96,7 @@ const Cache::Class& Cache::getClass(const std::string& name) const {
     if (iter != classes.end()) {
         return iter->second;
     }
-    UnexpectedError("No such class.");
+    UnexpectedError1(ClassNotExist, name);
 }
 
 unsigned Cache::getMemberIndex(const Class& cache_class, const Variable& member) const {
@@ -103,7 +104,7 @@ unsigned Cache::getMemberIndex(const Class& cache_class, const Variable& member)
     if (iter != cache_class.variables.end()) {
         return iter - cache_class.variables.begin();
     }
-    LogicError("No such member variable.")
+    LogicError1(DataNotExist, member.get());
 }
 
 Cache::Type Cache::getCacheType(const std::string& name) const {

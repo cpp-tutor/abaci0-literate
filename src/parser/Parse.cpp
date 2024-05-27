@@ -1,5 +1,6 @@
 #include "Parse.hpp"
 #include "Keywords.hpp"
+#include "Messages.hpp"
 #include "utility/Utility.hpp"
 #include "utility/Report.hpp"
 #include "ast/Expr.hpp"
@@ -16,6 +17,7 @@ using abaci::utility::Operators;
 using abaci::utility::Operator;
 using abaci::utility::String;
 using abaci::utility::Variable;
+using abaci::utility::TypeConversions;
 
 using x3::char_;
 using x3::string;
@@ -211,19 +213,10 @@ auto makeThisPtr = [](auto& ctx){
     _val(ctx) = Variable("_this");
 };
 
-std::unordered_map<std::string,AbaciValue::Type> type_conv{
-    { INT, AbaciValue::Integer },
-    { FLOAT, AbaciValue::Float },
-    { COMPLEX, AbaciValue::Complex },
-    { STR, AbaciValue::String },
-    { REAL, AbaciValue::Real },
-    { IMAG, AbaciValue::Imaginary }
-};
-
 auto makeConversion = [](auto& ctx){
     const TypeConvItems& items = _attr(ctx);
-    auto iter = type_conv.find(items.to_type);
-    if (iter != type_conv.end()) {
+    auto iter = TypeConversions.find(items.to_type);
+    if (iter != TypeConversions.end()) {
         _val(ctx) = TypeConv{ iter->second, std::shared_ptr<ExprNode>{ new ExprNode(items.expression) } };
     }
 };
@@ -251,7 +244,7 @@ auto getOperator = [](auto& ctx){
         _val(ctx) = iter->second;
     }
     else {
-        UnexpectedError("Unknown operator");
+        UnexpectedError0(BadOperator);
     }
 };
 
@@ -333,7 +326,7 @@ const auto primary_n_def = value[MakeNode<>()] | LEFT_PAREN >> logic_or[MakeNode
     | this_value_call[MakeNode<>()] | data_value_call[MakeNode<>()] | user_input[MakeNode<>()] | variable[MakeNode<>()];
 
 const auto keywords_def = lit(AND) | CASE | CLASS | COMPLEX | ELSE | ENDCASE | ENDCLASS | ENDFN | ENDIF | ENDWHILE
-    | FLOAT | FALSE | FN | IF | IMAG | INPUT | INT | LET | NIL | NOT | OR | PRINT | REAL | RETURN | STR | THIS | TRUE | WHEN | WHILE;
+    | FALSE | FLOAT | FN | IF | IMAG | INPUT | INT | LET | NIL | NOT | OR | PRINT | REAL | REPEAT | RETURN | STR | THIS | TRUE | UNTIL | WHEN | WHILE;
 
 const auto comment_items_def = *(char_ - '\n');
 const auto comment_def = REM >> comment_items[MakeStmt<CommentStmt>()];

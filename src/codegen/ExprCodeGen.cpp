@@ -1,6 +1,7 @@
 #include "CodeGen.hpp"
 #include "engine/JIT.hpp"
 #include "utility/Utility.hpp"
+#include "parser/Messages.hpp"
 #include <llvm/IR/Constants.h>
 #include <algorithm>
 #include <cstring>
@@ -57,9 +58,9 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                     break;
                 }
                 case AbaciValue::Object:
-                    UnexpectedError("Cannot assign objects.");
+                    UnexpectedError0(NoAssignObject);
                 default:
-                    UnexpectedError("Not yet implemented");
+                    UnexpectedError0(BadType);
             }
             break;
         }
@@ -95,7 +96,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                     value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.Object"), 0));
                     break;
                 default:
-                    UnexpectedError("Bad type for dereference");
+                    UnexpectedError0(BadType);
             }
             push({ value, type });
             break;
@@ -183,7 +184,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                             break;
                         }
                         default:
-                            UnexpectedError("Bad type for return value.");
+                            UnexpectedError0(BadReturnType);
                     }
                     push({ value, type });
                     builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
@@ -219,7 +220,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                     break;
                 }
                 default:
-                    UnexpectedError("Not a function or class.");
+                    UnexpectedError1(CallableNotExist, call.name);
             }
             break;
         }
@@ -232,7 +233,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
             auto type = environment->getCurrentDefineScope()->getType(data.name.get());
             for (const auto& member : data.member_list) {
                 if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
-                    UnexpectedError("Not an object.")
+                    UnexpectedError0(BadObject);
                 }
                 auto object = std::get<Environment::DefineScope::Object>(type);
                 indices.push_back(jit.getCache()->getMemberIndex(jit.getCache()->getClass(object.class_name), member));
@@ -273,7 +274,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                     value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.Object"), 0));
                     break;
                 default:
-                    UnexpectedError("Bad type for dereference");
+                    UnexpectedError0(BadType);
             }
             push({ value, type });
             break;
@@ -287,7 +288,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
             auto object_type = environment->getCurrentDefineScope()->getType(method_call.name.get());
             for (const auto& member : method_call.member_list) {
                 if (!std::holds_alternative<Environment::DefineScope::Object>(object_type)) {
-                    UnexpectedError("Not an object.")
+                    UnexpectedError0(BadObject);
                 }
                 auto object = std::get<Environment::DefineScope::Object>(object_type);
                 indices.push_back(jit.getCache()->getMemberIndex(jit.getCache()->getClass(object.class_name), member));
@@ -381,7 +382,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                     break;
                 }
                 default:
-                    UnexpectedError("Bad type for return value.");
+                    UnexpectedError0(BadReturnType);
             }
             push({ value, type });
             builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
@@ -456,7 +457,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                     value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.String"), 0));
                     break;
                 default:
-                    UnexpectedError("Bad type for conversion.");
+                    UnexpectedError0(BadType);
             }
             push({ value, type });
             break;
@@ -485,7 +486,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                                         result.first = builder.CreateOr(result.first, operand.first);
                                         break;
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::Integer:
@@ -522,7 +523,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                                         result.first = builder.CreateOr(result.first, operand.first);
                                         break;
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::Float:
@@ -540,7 +541,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                                         result.first = builder.CreateFDiv(result.first, operand.first);
                                         break;
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::Complex:
@@ -558,7 +559,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                                         break;
                                     }
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::String:
@@ -582,11 +583,11 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                                         break;
                                     }
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             default:
-                                UnexpectedError("Not yet implemented");
+                                LogicError0(BadType);
                                 break;
                         }
                     }
@@ -614,7 +615,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                                         break;
                                     }
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::Float:
@@ -625,7 +626,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                                         break;
                                     }
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::Complex:
@@ -640,11 +641,11 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                                         break;
                                     }
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                         default:
-                            UnexpectedError("Not yet implemented");
+                            LogicError0(BadType);
                             break;
                         }
                     }
@@ -666,7 +667,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                                         result.first = builder.CreateNot(result.first);
                                         break;
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::Integer:
@@ -683,7 +684,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                                         result.first = builder.CreateNot(result.first);
                                         break;
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::Float:
@@ -696,7 +697,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                                         result.second = AbaciValue::Boolean;
                                         break;
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::Complex:
@@ -711,11 +712,11 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                                         break;
                                     }
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                         default:
-                            UnexpectedError("Not yet implemented");
+                            LogicError0(BadType);
                             break;
                         }
                     }
@@ -764,7 +765,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                                             bool_result = builder.CreateAnd(bool_result, builder.CreateOr(result.first, operand.first));
                                             break;
                                         default:
-                                            UnexpectedError("Unknown operator.");
+                                            LogicError0(BadOperator);
                                     }
                                     break;
                                 case AbaciValue::Integer:
@@ -794,7 +795,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                                             bool_result = builder.CreateAnd(bool_result, builder.CreateOr(toBoolean(result), toBoolean(operand)));
                                             break;
                                         default:
-                                            UnexpectedError("Unknown operator.");
+                                            LogicError0(BadOperator);
                                     }
                                     break;
                                 case AbaciValue::Float:
@@ -824,7 +825,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                                             bool_result = builder.CreateAnd(bool_result, builder.CreateOr(toBoolean(result), toBoolean(operand)));
                                             break;
                                         default:
-                                            UnexpectedError("Unknown operator.");
+                                            LogicError0(BadOperator);
                                     }
                                     break;
                                 case AbaciValue::Complex: {
@@ -842,7 +843,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                                                 builder.CreateOr(builder.CreateFCmpONE(real_value1, real_value2), builder.CreateFCmpONE(imag_value1, imag_value2)));
                                             break;
                                         default:
-                                            UnexpectedError("Unknown operator.");
+                                            LogicError0(BadOperator);
                                     }
                                     break;
                                 }
@@ -861,12 +862,12 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                                                 builder.CreateCall(module.getFunction("strcmp"), { str1_ptr, str2_ptr })));
                                             break;
                                         default:
-                                            UnexpectedError("Unknown operator.");
+                                            LogicError0(BadOperator);
                                     }
                                     break;
                                 }
                                 default:
-                                    UnexpectedError("Not yet implemented");
+                                    LogicError0(BadType);
                                     break;
                             }
                             result.first = operand.first;
@@ -879,19 +880,19 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                     break;
                 }
                 default:
-                    UnexpectedError("Unknown node association type.");
+                    UnexpectedError0(BadAssociation);
             }
             break;
         }
         default:
-            UnexpectedError("Bad node type.");
+            UnexpectedError0(BadNode);
     }
 }
 
 AbaciValue::Type ExprCodeGen::promote(StackType& a, StackType& b) const {
     if (std::holds_alternative<Environment::DefineScope::Object>(a.second)
         || std::holds_alternative<Environment::DefineScope::Object>(b.second)) {
-        LogicError("Bad type(s) for operator.")
+        UnexpectedError0(NoObject);
     }
     if (a.second == b.second) {
         return environmentTypeToType(a.second);
@@ -961,7 +962,7 @@ AbaciValue::Type ExprCodeGen::promote(StackType& a, StackType& b) const {
             break;
         }
         default:
-            UnexpectedError("Not yet implemented.");
+            UnexpectedError0(BadCoerceTypes);
     }
     a.second = b.second = type;
     return type;
@@ -985,7 +986,7 @@ Value *ExprCodeGen::toBoolean(StackType& v) const {
             break;
         }
         default:
-            UnexpectedError("Not yet implemented.");
+            UnexpectedError0(NoBoolean);
     }
     return boolean;
 }

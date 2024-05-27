@@ -9,7 +9,7 @@ The source code presented in this literate program is discussed in the following
 * `utility`: Code to facilitate the static type system and symbol table, manage lexical scoping and report errors (with a source location).
 * `lib`: Functions directly exposed to the JIT engine at runtime, depending only upon the source files in `utility` as well as the C++ standard library and libfmt.
 * `ast`: Two C++ headers which define all of the classes used to hold the Abstract Syntax Tree.
-* `parser`: All of the Boost Spirit X3 parsing code logic is within this directory, together with a header file declaring all of the Abaci keywords and other symbols.
+* `parser`: All of the Boost Spirit X3 parsing code logic is within this directory, together with header files declaring all of the Abaci keywords and other symbols, and diagnostic error messages used throughout the code.
 * `codegen`: Translation of the constructed AST into LLVM API calls is performed by the code within this directory.
 * `engine`: Handles management of the function cache and creation of a standalone function to execute the generated code.
 * `main.cpp`: The simple frontend and driver presented allows per-file and per-statement JIT compilation and execution.
@@ -109,7 +109,7 @@ private:
 static_assert(sizeof(AbaciValue::value) == 8, "AbaciValue::value must be exactly 64 bits");
 ```
 
-The scoped enum `Operator` lists all of the operators used by Abaci0. A mapping of the string values to these tokens is held in the map `Operators`, with the string values as the keys. Stream output for `AbaciValue` and `Operator`, and generic conversion of any type to a string representation according to its stream output form, are supported.
+The scoped enum `Operator` lists all of the operators used by Abaci0. A mapping of the string values to these tokens is held in the map `Operators`, with the string values as the keys. There is a `TypeConversions` map declared here whose only client is `parser/Parse.cpp`.
 
 ```cpp
 enum class Operator { None, Plus, Minus, Times, Divide, Modulo, FloorDivide, Exponent,
@@ -119,12 +119,14 @@ enum class Operator { None, Plus, Minus, Times, Divide, Modulo, FloorDivide, Exp
 
 extern const std::unordered_map<std::string,Operator> Operators;
 
+extern const std::unordered_map<std::string,AbaciValue::Type> TypeConversions;
+
 } // namespace abaci::utility
 ```
 
 ### `Utility.cpp`
 
-Global container `Operators` is defined in this implementation file as a `std::unordered_map`, with the keys being string representations defined in `parser/Keywords.hpp` and the only client being `parser/Parse.cpp`.
+Global container `Operators` is defined in this implementation file as a `std::unordered_map`, with the keys being string representations defined in `parser/Keywords.hpp` and the only client being `parser/Parse.cpp`. Container `TypeConversions` similarly uses keys of string representations of target types and values of type `AbaciValue::Type`.
 
 ```cpp
 namespace abaci::utility {
@@ -154,6 +156,15 @@ const std::unordered_map<std::string,Operator> Operators{
     { SEMICOLON, Operator::SemiColon },
     { FROM, Operator::From },
     { TO, Operator::To }
+};
+
+const std::unordered_map<std::string,AbaciValue::Type> TypeConversions{
+    { INT, AbaciValue::Integer },
+    { FLOAT, AbaciValue::Float },
+    { COMPLEX, AbaciValue::Complex },
+    { STR, AbaciValue::String },
+    { REAL, AbaciValue::Real },
+    { IMAG, AbaciValue::Imaginary }
 };
 ```
 
@@ -350,7 +361,7 @@ void Environment::DefineScope::setType(const std::string& name, const Environmen
         types.insert({ name, type });
     }
     else {
-        UnexpectedError("Variable " + name + " already exists.");
+        UnexpectedError1(VarExists, name);
     }
 }
 ```
@@ -367,7 +378,7 @@ Environment::DefineScope::Type Environment::DefineScope::getType(const std::stri
         return enclosing->getType(name);
     }
     else {
-        UnexpectedError("No such variable " + name + ".");
+        UnexpectedError1(VarNotExist, name);
     }
 }
 ```
@@ -411,7 +422,7 @@ void Environment::Scope::defineValue(const std::string& name, const AbaciValue& 
         variables.insert({ name, value });
     }
     else {
-        UnexpectedError("Variable " + name + " already exists.");
+        UnexpectedError1(VarExists, name);
     }
 }
 ```
@@ -426,14 +437,14 @@ void Environment::Scope::setValue(const std::string& name, const AbaciValue& val
             iter->second = value;
         }
         else {
-            UnexpectedError("Variable " + name + " already defined with different type.");
+            UnexpectedError1(VarType, name);
         }
     }
     else if (enclosing) {
         enclosing->setValue(name, value);
     }
     else {
-        UnexpectedError("Variable " + name + " does not exist.");
+        UnexpectedError1(VarNotExist, name);
     }
 }
 ```
@@ -450,7 +461,7 @@ AbaciValue *Environment::Scope::getValue(const std::string& name) {
         return enclosing->getValue(name);
     }
     else {
-       UnexpectedError("No such variable " + name + ".");
+        UnexpectedError1(VarNotExist, name);
     }
 }
 ```
@@ -466,7 +477,7 @@ std::string mangled(const std::string& name, const std::vector<Environment::Defi
             char buffer[16];
             auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer), static_cast<int>(ch), 16);
             if (ec != std::errc()) {
-                UnexpectedError("Bad numeric conversion.");
+                UnexpectedError0(BadNumericConv);
             }
             *ptr = '\0';
             function_name.append(buffer);
@@ -475,7 +486,7 @@ std::string mangled(const std::string& name, const std::vector<Environment::Defi
             function_name.push_back(ch);
         }
         else {
-            UnexpectedError("Bad function name.")
+            UnexpectedError0(BadChar);
         }
     }
     for (const auto& parameter_type : types) {
@@ -485,7 +496,7 @@ std::string mangled(const std::string& name, const std::vector<Environment::Defi
             auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer),
                 static_cast<int>(std::get<AbaciValue::Type>(parameter_type) & AbaciValue::TypeMask), 10);
             if (ec != std::errc()) {
-                UnexpectedError("Bad numeric conversion.");
+                UnexpectedError0(BadNumericConv);
             }
             *ptr = '\0';
             function_name.append(buffer);
@@ -512,7 +523,7 @@ AbaciValue::Type environmentTypeToType(const Environment::DefineScope::Type& env
         return AbaciValue::Object;
     }
     else {
-        UnexpectedError("Bad type.")
+        UnexpectedError0(BadType);
     }
 }
 
@@ -544,7 +555,7 @@ bool operator==(const Environment::DefineScope::Type& lhs, const Environment::De
             return true;
         }
     }
-    UnexpectedError("Bad type.");
+    UnexpectedError0(BadType);
 }
 
 } // namespace abaci::utility
@@ -552,24 +563,27 @@ bool operator==(const Environment::DefineScope::Type& lhs, const Environment::De
 
 ### `Report.hpp`
 
-The error class `AbaciError` and its sub-classes `CompilerError` and `AssertError` inherit from `std::exception`, overriding the `what()` function to provide error diagnostics in client code's `catch` clause. Both `CompilerError` and `AssertError` store the source filename and line number in the protected `message` member of `AbaciError`.
+The error classes `AbaciError`, `CompilerError` and `AssertError` all inherit from `std::exception`, overriding the `what()` function to provide error diagnostics in client code's `catch` clause. Both `CompilerError` and `AssertError` store the source filename and line number in their `message` member.
 
 ```cpp
+template<typename... Ts>
 class AbaciError : public std::exception {
-protected:
+private:
     std::string message{};
 public:
-    AbaciError(const std::string& message = "") : message{ message } {}
+    AbaciError(const char *error_string, Ts... args) : message{ format(runtime(error_string), std::forward<Ts>(args)...) } {}
     virtual const char *what() const noexcept override { return message.c_str(); }
-    virtual ~AbaciError() {}
 };
 
-class CompilerError : public AbaciError {
+template<typename... Ts>
+class CompilerError : public std::exception {
+private:
+    std::string message{};
 public:
-    CompilerError(const std::string& error_string, const char* source_file = "", const int line_number = -1)
-        : AbaciError("Compiler inconsistency detected: ")
+    CompilerError(const char* source_file, const int line_number, const char *error_string, Ts... args)
+        : message{ format(runtime(error_string), std::forward<Ts>(args)...) }
     {
-        message.append(error_string);
+        message.append(" Compiler inconsistency detected!");
         if (source_file != std::string{}) {
             message.append("\nSource filename: ");
             message.append(source_file);
@@ -579,14 +593,16 @@ public:
             }
         }
     }
+    virtual const char *what() const noexcept override { return message.c_str(); }
 };
 
-class AssertError : public AbaciError {
+class AssertError : public std::exception {
+private:
+    std::string message{};
 public:
-    AssertError(const std::string& assertion, const char* source_file = "", const int line_number = -1)
-        : AbaciError("Assertion failed: ")
+    AssertError(const char* source_file, const int line_number, const char *assertion)
+        : message{ format(runtime("Assertion failed: {}"), assertion) }
     {
-        message.append(assertion);
         if (source_file != std::string{}) {
             message.append("\nSource filename: ");
             message.append(source_file);
@@ -596,15 +612,20 @@ public:
             }
         }
     }
+    virtual const char *what() const noexcept override { return message.c_str(); }
 };
 ```
 
-Convenience macros `LogicError()`, `UnexpectedError()` and `Assert()` allow for population of all of the constructor parameterss of these classes. `LogicError()` is intended for reporting errors due to ill-formed Abaci0 programs, while `UnexpectedError()` and `Assert()` are intended to pinpoint problems in the compiler itself. [Note: Adaptation of the source code to prefer `LogicError()` is not yet complete.]
+Convenience macros `LogicErrorN()`, `UnexpectedErrorN()` and `Assert()` allow for population of all of the constructor parameterss of these classes. `LogicError()` is intended for reporting errors due to ill-formed Abaci0 programs, while `UnexpectedError()` and `Assert()` are intended to pinpoint problems in the compiler itself. [Note: Adaptation of the source code to prefer `LogicError()` is not yet complete.]
 
 ```cpp
-#define LogicError(error_string) { throw AbaciError(error_string); }
-#define UnexpectedError(error_string) { throw CompilerError(error_string, __FILE__, __LINE__); }
-#define Assert(condition) { if (!(condition)) throw AssertError(#condition, __FILE__, __LINE__); }
+#define LogicError0(error_string) throw AbaciError(error_string)
+#define LogicError1(error_string, arg1) throw AbaciError(error_string, arg1)
+#define LogicError2(error_string, arg1, arg2) throw AbaciError(error_string, arg1, arg2)
+#define UnexpectedError0(error_string) throw CompilerError(__FILE__, __LINE__, error_string)
+#define UnexpectedError1(error_string, arg1) throw CompilerError(__FILE__, __LINE__, error_string, arg1)
+#define UnexpectedError2(error_string, arg1, arg2) throw CompilerError(__FILE__, __LINE__, error_string, arg1, arg2)
+#define Assert(condition) if (!(condition)) throw AssertError(__FILE__, __LINE__, #condition)
 ```
 
 ## Directory `lib`
@@ -652,6 +673,7 @@ void convertType(abaci::utility::AbaciValue *to, abaci::utility::AbaciValue *fro
 Function `printValue()` allows the compiled code to output values and variables at execution time. Whilst the type of the value is always known at compile-time, this fact is not (yet) taken advantage of. Instead a switch is used, allowing all of the possible values of the `type` member, togther with formatted `print()` calls outputting to `stdout`, or `fwrite()` in the case of `abaci::utility::String`.
 
 ```cpp
+
 void printValue(AbaciValue *value) {
     switch (value->type) {
         case AbaciValue::Nil:
@@ -676,10 +698,10 @@ void printValue(AbaciValue *value) {
             fwrite(reinterpret_cast<const char*>(value->value.str->ptr), value->value.str->len, 1, stdout);
             break;
         case AbaciValue::Object:
-            print("<Instance of {}>", reinterpret_cast<const char*>(value->value.object->class_name));
+            print(runtime(InstanceOf), reinterpret_cast<const char*>(value->value.object->class_name));
             break;
         default:
-            print("{}?", static_cast<int>(value->type));
+            UnexpectedError1(UnknownType, static_cast<int>(value->type));
             break;
     }
 }
@@ -727,7 +749,7 @@ void complexMath(Complex *result, Operator op, Complex *operand1, Complex *opera
             r = std::pow(a, b);
             break;
         default:
-            UnexpectedError("Unknown operator.");
+            UnexpectedError0(BadOperator);
     }
     result->real = r.real();
     result->imag = r.imag();
@@ -843,7 +865,7 @@ void convertType(AbaciValue *to, AbaciValue *from) {
                     break;
                 }
                 default:
-                    LogicError("Bad type(s) for conversion.");
+                    LogicError1(BadConvType, INT);
             }
             break;
         case AbaciValue::Float:
@@ -863,7 +885,7 @@ void convertType(AbaciValue *to, AbaciValue *from) {
                     break;
                 }
                 default:
-                    LogicError("Bad type(s) for conversion.");
+                    LogicError1(BadConvType, FLOAT);
             }
             break;
         case AbaciValue::Complex:
@@ -907,7 +929,7 @@ void convertType(AbaciValue *to, AbaciValue *from) {
                     to->value.complex->imag = from->value.complex->imag;
                     break;
                 default:
-                    LogicError("Bad type(s) for conversion.");
+                    LogicError1(BadConvType, COMPLEX);
             }
             break;
         case AbaciValue::String: {
@@ -932,7 +954,7 @@ void convertType(AbaciValue *to, AbaciValue *from) {
                     str.assign(reinterpret_cast<const char*>(from->value.str->ptr), from->value.str->len);
                     break;
                 default:
-                    LogicError("Bad type(s) for conversion.");
+                    LogicError1(BadConvType, STR);
             }
             char *ptr = reinterpret_cast<char*>(to->value.str->ptr);
             if (str.size() < to->value.str->len) {
@@ -948,7 +970,7 @@ void convertType(AbaciValue *to, AbaciValue *from) {
                     to->type = AbaciValue::Float;
                     break;
                 default:
-                    LogicError("Must be complex type.");
+                    LogicError1(NeedType, COMPLEX);
             }
             break;
         case AbaciValue::Imaginary:
@@ -958,11 +980,11 @@ void convertType(AbaciValue *to, AbaciValue *from) {
                     to->type = AbaciValue::Float;
                     break;
                 default:
-                    LogicError("Must be complex type.");
+                    LogicError1(NeedType, COMPLEX);
             }
             break;
         default:
-            UnexpectedError("Bad target conversion type.")
+            UnexpectedError1(BadConvTarget, static_cast<int>(to->type));
     }
 }
 ```
@@ -1304,6 +1326,7 @@ using abaci::utility::AbaciValue;
 using abaci::utility::Complex;
 using abaci::utility::Operators;
 using abaci::utility::Operator;
+using abaci::utility::String;
 ```
 
 X3 rule declarations take two template parameters, the class type and the semantic type for the rule. The declaration rule `rule_1` must have a corresponding definition `rule_1_def` later in the implementation file in order to use it with `BOOST_SPIRIT_DEFINE()`. The rules related to expressions are listed first, many of which simply associate a token with an `abaci::utility::Operator`. The pairs of rules, such as `logic_and` and `logic_and_n`, are used to prevent flattening of an expression AST to a single array.
@@ -1490,22 +1513,13 @@ auto makeThisPtr = [](auto& ctx){
 };
 ```
 
-Making a `TypeConvItems` rule into a `TypeConv`, converting the literal string into an `AbaciValue::Type`, uses another `std::unordered_map` and function `makeConversion()`.
+Making a `TypeConvItems` rule into a `TypeConv`, converting the literal string into an `AbaciValue::Type`, uses externally-declared `TypeConversions` and function `makeConversion()`.
 
 ```cpp
-std::unordered_map<std::string,AbaciValue::Type> type_conv{
-    { INT, AbaciValue::Integer },
-    { FLOAT, AbaciValue::Float },
-    { COMPLEX, AbaciValue::Complex },
-    { STR, AbaciValue::String },
-    { REAL, AbaciValue::Real },
-    { IMAG, AbaciValue::Imaginary }
-};
-
 auto makeConversion = [](auto& ctx){
     const TypeConvItems& items = _attr(ctx);
-    auto iter = type_conv.find(items.to_type);
-    if (iter != type_conv.end()) {
+    auto iter = TypeConversions.find(items.to_type);
+    if (iter != TypeConversions.end()) {
         _val(ctx) = TypeConv{ iter->second, std::shared_ptr<ExprNode>{ new ExprNode(items.expression) } };
     }
 };
@@ -1545,7 +1559,7 @@ auto getOperator = [](auto& ctx){
         _val(ctx) = iter->second;
     }
     else {
-        UnexpectedError("Unknown operator");
+        UnexpectedError0(BadOperator);
     }
 };
 ```
@@ -1647,7 +1661,7 @@ The keywords are listed in order to disallow them as identifier names, note the 
 
 ```cpp
 const auto keywords_def = lit(AND) | CASE | CLASS | COMPLEX | ELSE | ENDCASE | ENDCLASS | ENDFN | ENDIF | ENDWHILE
-    | FLOAT | FALSE | FN | IF | IMAG | INPUT | INT | LET | NIL | NOT | OR | PRINT | REAL | RETURN | STR | THIS | TRUE | WHEN | WHILE;
+    | FALSE | FLOAT | FN | IF | IMAG | INPUT | INT | LET | NIL | NOT | OR | PRINT | REAL | REPEAT | RETURN | STR | THIS | TRUE | UNTIL | WHEN | WHILE;
 ```
 
 Next are the statement rules themselves, which are what gives the reader (and parser function) an idea of the syntax of the Abaci0 language. All of the different values for rule definition `statement_def` are of type `StmtNode`, and hence all must make use of `MakeStmt<...Stmt>()` in order to appear to be the same type.
@@ -1890,6 +1904,74 @@ SYMBOL(OCT_PREFIX, "0");
 SYMBOL(BIN_PREFIX, "0b");
 ```
 
+### `Messages.hpp`
+
+All of the error messages and prompts used by the program are defined in this file. Most are intended for use with the classes in `utility/Report.hpp` and as such can contain placeholders (`{}`) for context-specific information.
+
+```cpp
+#define MESSAGE(MSG, STR) inline const char *MSG = reinterpret_cast<const char*>(u8##STR)
+
+// lib/Abaci.cpp
+MESSAGE(InstanceOf, "<Instance of {}>");
+MESSAGE(UnknownType, "Unknown type ({}).");
+MESSAGE(BadOperator, "Unknown operator in this context.");
+MESSAGE(BadConvType, "Bad type for conversion to \'{}\'.");
+MESSAGE(NeedType, "Must be \'{}\' type.");
+MESSAGE(BadConvTarget, "Bad target conversion type ({}).");
+// utility/Environment.cpp
+MESSAGE(VarExists, "Variable \'{}\' already exists.");
+MESSAGE(VarNotExist, "Variable \'{}\' does not exist.");
+MESSAGE(VarType, "Existing variable \'{}\' has different type.");
+MESSAGE(BadNumericConv, "Bad numeric conversion when generating mangled name.");
+MESSAGE(BadChar, "Bad character in function name.");
+MESSAGE(BadType, "Bad type.");
+// engine/Cache.cpp
+MESSAGE(ClassExists, "Class \'{}\' already exists.");
+MESSAGE(FuncExists, "Function \'{}\' already exists.");
+MESSAGE(WrongArgs, "Wrong number of arguments (have {}, need {}).");
+MESSAGE(FuncNotExist, "Function \'{}\' does not exist.");
+MESSAGE(NoInst, "No such instantiation for function \'{}\'.");
+MESSAGE(ClassNotExist, "Class \'{}\' does not exist.");
+MESSAGE(DataNotExist, "Object does not have data member \'{}\'.");
+// engine/JIT.hpp
+MESSAGE(NoType, "Type \'{}\' not found.");
+// engine/JIT.cpp
+MESSAGE(NoLLJIT, "Failed to create LLJIT instance.");
+MESSAGE(NoModule, "Failed to add IR module.");
+MESSAGE(NoSymbol, "Failed to add symbols to module.");
+MESSAGE(NoJITFunc, "JIT function not found.");
+// codegen/ExprCodeGen.cpp
+MESSAGE(NoAssignObject, "Cannot assign objects.");
+MESSAGE(BadReturnType, "Bad type for return value.");
+MESSAGE(CallableNotExist, "No function or class called \'{}\'.");
+MESSAGE(BadObject, "Not an object.");
+MESSAGE(BadConvSource, "Bad source conversion type.");
+MESSAGE(BadAssociation, "Unknown association type.");
+MESSAGE(BadNode, "Bad node type.");
+MESSAGE(BadCoerceTypes, "Incompatible types.");
+MESSAGE(NoObject, "Operation is incompatible with object type.");
+MESSAGE(NoBoolean, "Cannot convert this type to Boolean.");
+// codegen/StmtCodeGen.cpp
+MESSAGE(BadPrint, "Bad print entity.");
+MESSAGE(NoConstantAssign, "Cannot reassign to constant \'{}\'.");
+MESSAGE(DataType, "Data member already has different type.");
+MESSAGE(BadStmtNode, "Bad StmtNode type.");
+// codegen/TypeCodeGen.cpp
+MESSAGE(ReturnAtEnd, "Return statement must be at end of block.");
+MESSAGE(ObjectType, "Existing object \'{}\' has different type(s).");
+MESSAGE(FuncTopLevel, "Functions must be defined at top-level.");
+MESSAGE(ReturnOnlyInFunc, "Return statement can only appear inside a function.");
+MESSAGE(FuncTypeSet, "Function return type already set to different type.");
+MESSAGE(NoExpression, "Expression not permitted in this context.");
+// main.cpp
+MESSAGE(BadParse, "Could not parse file.");
+MESSAGE(InitialPrompt, "Abaci0 version {}\nEnter code, or a blank line to end:\n> ");
+MESSAGE(InputPrompt, "> ");
+MESSAGE(ContinuationPrompt, ". ");
+MESSAGE(SyntaxError, "Syntax error.");
+MESSAGE(Version, "1.0.0 (2024-May-27)");
+```
+
 ## Directory `codegen`
 
 The implementation files `codegen/ExprCodeGen.cpp` and `codegen/StmtCodeGen.cpp` contain almost all of the code for translating the constructed Abstract Syntax Tree into LLVM API calls. By necessity they are quite lengthy (~900 and ~500 lines) and in particular class `ExprCodeGen` contains a sizeable `operator()` member function which handles code generation of arbitrarily complex `ExprNode` trees (and calls itself recursively at numerous points). Class `StmtCodeGen` parses both single statements and blocks, calling a generic function `codeGen()` which is specialized in the implementation file to the statement types in `ast/Stmt.hpp`.
@@ -1918,7 +2000,7 @@ class ExprCodeGen {
     mutable std::vector<StackType> stack;
     Environment *environment;
     auto pop() const {
-        Assert(!stack.empty())
+        Assert(!stack.empty());
         auto value = stack.back();
         stack.pop_back();
         return value;
@@ -1930,7 +2012,7 @@ public:
     ExprCodeGen() = delete;
     ExprCodeGen(JIT& jit) : jit{ jit }, builder{ jit.getBuilder() }, module{ jit.getModule() }, environment{ jit.getEnvironment() } {}
     StackType get() const {
-        Assert(stack.size() == 1)
+        Assert(stack.size() == 1);
         return stack.front();
     }
     void operator()(const abaci::ast::ExprNode&) const;
@@ -1968,7 +2050,7 @@ class TypeEvalGen {
     Environment *environment;
     Cache *cache;
     auto pop() const {
-        Assert(!stack.empty())
+        Assert(!stack.empty());
         auto value = stack.back();
         stack.pop_back();
         return value;
@@ -1980,7 +2062,7 @@ public:
     TypeEvalGen() = delete;
     TypeEvalGen(Environment *environment, Cache *cache) : environment{ environment }, cache{ cache } {}
     Environment::DefineScope::Type get() const {
-        Assert(stack.size() == 1)
+        Assert(stack.size() == 1);
         return stack.front();
     }
     void operator()(const abaci::ast::ExprNode&) const;
@@ -2077,9 +2159,9 @@ For a `ValueNode` the value is extracted from the data in the AST and pushed to 
                     break;
                 }
                 case AbaciValue::Object:
-                    UnexpectedError("Cannot assign objects.");
+                    UnexpectedError0(NoAssignObject);
                 default:
-                    UnexpectedError("Not yet implemented");
+                    UnexpectedError0(BadType);
             }
             break;
         }
@@ -2120,7 +2202,7 @@ In the case of an `VariableNode` the name is stored in the generated code before
                     value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.Object"), 0));
                     break;
                 default:
-                    UnexpectedError("Bad type for dereference");
+                    UnexpectedError0(BadType);
             }
             push({ value, type });
             break;
@@ -2213,7 +2295,7 @@ If a `CallNode` is found, things are slightly more complicated. Firstly it must 
                             break;
                         }
                         default:
-                            UnexpectedError("Bad type for return value.");
+                            UnexpectedError0(BadReturnType);
                     }
                     push({ value, type });
                     builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
@@ -2254,7 +2336,7 @@ In order to evaluate a class constructor to create an object, the data member va
                     break;
                 }
                 default:
-                    UnexpectedError("Not a function or class.");
+                    UnexpectedError1(CallableNotExist, call.name);
             }
             break;
         }
@@ -2272,7 +2354,7 @@ In order to dereference an object's data member, a stack of indices must be crea
             auto type = environment->getCurrentDefineScope()->getType(data.name.get());
             for (const auto& member : data.member_list) {
                 if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
-                    UnexpectedError("Not an object.")
+                    UnexpectedError0(BadObject);
                 }
                 auto object = std::get<Environment::DefineScope::Object>(type);
                 indices.push_back(jit.getCache()->getMemberIndex(jit.getCache()->getClass(object.class_name), member));
@@ -2313,7 +2395,7 @@ In order to dereference an object's data member, a stack of indices must be crea
                     value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.Object"), 0));
                     break;
                 default:
-                    UnexpectedError("Bad type for dereference");
+                    UnexpectedError0(BadType);
             }
             push({ value, type });
             break;
@@ -2332,7 +2414,7 @@ Method calls reuse a significant amount of logic from both data member access an
             auto object_type = environment->getCurrentDefineScope()->getType(method_call.name.get());
             for (const auto& member : method_call.member_list) {
                 if (!std::holds_alternative<Environment::DefineScope::Object>(object_type)) {
-                    UnexpectedError("Not an object.")
+                    UnexpectedError0(BadObject);
                 }
                 auto object = std::get<Environment::DefineScope::Object>(object_type);
                 indices.push_back(jit.getCache()->getMemberIndex(jit.getCache()->getClass(object.class_name), member));
@@ -2426,7 +2508,7 @@ Method calls reuse a significant amount of logic from both data member access an
                     break;
                 }
                 default:
-                    UnexpectedError("Bad type for return value.");
+                    UnexpectedError0(BadReturnType);
             }
             push({ value, type });
             builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
@@ -2511,7 +2593,7 @@ When a type conversion is encountered, the expression is evaluated by a new inst
                     value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.String"), 0));
                     break;
                 default:
-                    UnexpectedError("Bad type for conversion.");
+                    UnexpectedError0(BadType);
             }
             push({ value, type });
             break;
@@ -2545,7 +2627,7 @@ For a `ListNode` a further switch is made on the association type. For `Left` as
                                         result.first = builder.CreateOr(result.first, operand.first);
                                         break;
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::Integer:
@@ -2582,7 +2664,7 @@ For a `ListNode` a further switch is made on the association type. For `Left` as
                                         result.first = builder.CreateOr(result.first, operand.first);
                                         break;
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::Float:
@@ -2600,7 +2682,7 @@ For a `ListNode` a further switch is made on the association type. For `Left` as
                                         result.first = builder.CreateFDiv(result.first, operand.first);
                                         break;
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::Complex:
@@ -2618,7 +2700,7 @@ For a `ListNode` a further switch is made on the association type. For `Left` as
                                         break;
                                     }
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::String:
@@ -2642,11 +2724,11 @@ For a `ListNode` a further switch is made on the association type. For `Left` as
                                         break;
                                     }
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             default:
-                                UnexpectedError("Not yet implemented");
+                                LogicError0(BadType);
                                 break;
                         }
                     }
@@ -2679,7 +2761,7 @@ The only `Right` associative operator is `**` (exponentiation) and for this the 
                                         break;
                                     }
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::Float:
@@ -2690,7 +2772,7 @@ The only `Right` associative operator is `**` (exponentiation) and for this the 
                                         break;
                                     }
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::Complex:
@@ -2705,11 +2787,11 @@ The only `Right` associative operator is `**` (exponentiation) and for this the 
                                         break;
                                     }
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                         default:
-                            UnexpectedError("Not yet implemented");
+                            LogicError0(BadType);
                             break;
                         }
                     }
@@ -2736,7 +2818,7 @@ The three `Unary` operators are handled by the next part, obtaining the value at
                                         result.first = builder.CreateNot(result.first);
                                         break;
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::Integer:
@@ -2753,7 +2835,7 @@ The three `Unary` operators are handled by the next part, obtaining the value at
                                         result.first = builder.CreateNot(result.first);
                                         break;
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::Float:
@@ -2766,7 +2848,7 @@ The three `Unary` operators are handled by the next part, obtaining the value at
                                         result.second = AbaciValue::Boolean;
                                         break;
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                             case AbaciValue::Complex:
@@ -2781,11 +2863,11 @@ The three `Unary` operators are handled by the next part, obtaining the value at
                                         break;
                                     }
                                     default:
-                                        UnexpectedError("Unknown operator.");
+                                        LogicError0(BadOperator);
                                 }
                                 break;
                         default:
-                            UnexpectedError("Not yet implemented");
+                            LogicError0(BadType);
                             break;
                         }
                     }
@@ -2839,7 +2921,7 @@ Finally the implementation for `Boolean` operators (strictly speaking left assoc
                                             bool_result = builder.CreateAnd(bool_result, builder.CreateOr(result.first, operand.first));
                                             break;
                                         default:
-                                            UnexpectedError("Unknown operator.");
+                                            LogicError0(BadOperator);
                                     }
                                     break;
                                 case AbaciValue::Integer:
@@ -2869,7 +2951,7 @@ Finally the implementation for `Boolean` operators (strictly speaking left assoc
                                             bool_result = builder.CreateAnd(bool_result, builder.CreateOr(toBoolean(result), toBoolean(operand)));
                                             break;
                                         default:
-                                            UnexpectedError("Unknown operator.");
+                                            LogicError0(BadOperator);
                                     }
                                     break;
                                 case AbaciValue::Float:
@@ -2899,7 +2981,7 @@ Finally the implementation for `Boolean` operators (strictly speaking left assoc
                                             bool_result = builder.CreateAnd(bool_result, builder.CreateOr(toBoolean(result), toBoolean(operand)));
                                             break;
                                         default:
-                                            UnexpectedError("Unknown operator.");
+                                            LogicError0(BadOperator);
                                     }
                                     break;
                                 case AbaciValue::Complex: {
@@ -2917,7 +2999,7 @@ Finally the implementation for `Boolean` operators (strictly speaking left assoc
                                                 builder.CreateOr(builder.CreateFCmpONE(real_value1, real_value2), builder.CreateFCmpONE(imag_value1, imag_value2)));
                                             break;
                                         default:
-                                            UnexpectedError("Unknown operator.");
+                                            LogicError0(BadOperator);
                                     }
                                     break;
                                 }
@@ -2936,12 +3018,12 @@ Finally the implementation for `Boolean` operators (strictly speaking left assoc
                                                 builder.CreateCall(module.getFunction("strcmp"), { str1_ptr, str2_ptr })));
                                             break;
                                         default:
-                                            UnexpectedError("Unknown operator.");
+                                            LogicError0(BadOperator);
                                     }
                                     break;
                                 }
                                 default:
-                                    UnexpectedError("Not yet implemented");
+                                    LogicError0(BadType);
                                     break;
                             }
                             result.first = operand.first;
@@ -2954,12 +3036,12 @@ Finally the implementation for `Boolean` operators (strictly speaking left assoc
                     break;
                 }
                 default:
-                    UnexpectedError("Unknown node association type.");
+                    UnexpectedError0(BadAssociation);
             }
             break;
         }
         default:
-            UnexpectedError("Bad node type.");
+            UnexpectedError0(BadNode);
     }
 }
 ```
@@ -2970,7 +3052,7 @@ Member function `promote()` takes two `StackType` reference parameters and modif
 AbaciValue::Type ExprCodeGen::promote(StackType& a, StackType& b) const {
     if (std::holds_alternative<Environment::DefineScope::Object>(a.second)
         || std::holds_alternative<Environment::DefineScope::Object>(b.second)) {
-        LogicError("Bad type(s) for operator.")
+        UnexpectedError0(NoObject);
     }
     if (a.second == b.second) {
         return environmentTypeToType(a.second);
@@ -3040,7 +3122,7 @@ AbaciValue::Type ExprCodeGen::promote(StackType& a, StackType& b) const {
             break;
         }
         default:
-            UnexpectedError("Not yet implemented.");
+            UnexpectedError0(BadCoerceTypes);
     }
     a.second = b.second = type;
     return type;
@@ -3068,7 +3150,7 @@ Value *ExprCodeGen::toBoolean(StackType& v) const {
             break;
         }
         default:
-            UnexpectedError("Not yet implemented.");
+            UnexpectedError0(NoBoolean);
     }
     return boolean;
 }
@@ -3149,12 +3231,12 @@ void StmtCodeGen::codeGen(const PrintStmt& print) const {
                     case Operator::SemiColon:
                         break;
                     default:
-                        UnexpectedError("Bad print operator.");
+                        UnexpectedError0(BadOperator);
                 }
                 break;
             }
             default:
-                UnexpectedError("Bad field.");
+                UnexpectedError0(BadPrint);
                 break;
         }
     }
@@ -3205,11 +3287,11 @@ Use of `AssignStmt` implies the variable already exists, and checks are made for
 template<>
 void StmtCodeGen::codeGen(const AssignStmt& assign) const {
     if (!environment->getCurrentDefineScope()->isDefined(assign.name.get())) {
-        LogicError("No such variable.");
+        UnexpectedError1(VarNotExist, assign.name.get());
     }
     else if (auto type = environment->getCurrentDefineScope()->getType(assign.name.get());
         std::holds_alternative<AbaciValue::Type>(type) && (std::get<AbaciValue::Type>(type) & AbaciValue::Constant)) {
-        LogicError("Cannot assign to constant.");
+        UnexpectedError1(NoConstantAssign, assign.name.get());
     }
     Constant *name = ConstantDataArray::getString(module.getContext(), assign.name.get().c_str());
     AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
@@ -3218,7 +3300,7 @@ void StmtCodeGen::codeGen(const AssignStmt& assign) const {
     expr(assign.value);
     auto result = expr.get();
     if (!(environment->getCurrentDefineScope()->getType(assign.name.get()) == result.second)) {
-        LogicError("Cannot assign to variable with different type.");
+        LogicError1(VarType, assign.name.get());
     }
     auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
     builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
@@ -3369,7 +3451,7 @@ void StmtCodeGen::codeGen(const CaseStmt& case_stmt) const {
                 break;
             }
             default:
-                UnexpectedError("Not yet implemented.");
+                LogicError0(BadType);
         }
         builder.CreateCondBr(is_match, case_blocks.at(block_number * 2 + 1), case_blocks.at(block_number * 2 + 2));
         builder.SetInsertPoint(case_blocks.at(block_number * 2 + 1));
@@ -3488,7 +3570,7 @@ The code for assigning to object data members begins by looking up the class nam
 template<>
 void StmtCodeGen::codeGen(const DataAssignStmt& data_assign) const {
     if (!environment->getCurrentDefineScope()->isDefined(data_assign.name.get())) {
-        UnexpectedError("No such object.");
+        UnexpectedError1(VarNotExist, data_assign.name.get());
     }
     Constant *name = ConstantDataArray::getString(module.getContext(), data_assign.name.get().c_str());
     AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
@@ -3497,7 +3579,7 @@ void StmtCodeGen::codeGen(const DataAssignStmt& data_assign) const {
     auto type = environment->getCurrentDefineScope()->getType(data_assign.name.get());
     for (const auto& member : data_assign.member_list) {
         if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
-            UnexpectedError("Not an object.")
+            UnexpectedError0(BadObject);
         }
         auto object = std::get<Environment::DefineScope::Object>(type);
         indices.push_back(jit.getCache()->getMemberIndex(jit.getCache()->getClass(object.class_name), member));
@@ -3516,7 +3598,7 @@ void StmtCodeGen::codeGen(const DataAssignStmt& data_assign) const {
     expr(data_assign.value);
     auto result = expr.get();
     if (!(type == result.second)) {
-        UnexpectedError("Cannot assign to member with different type.")
+        UnexpectedError0(DataType);
     }
     auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
     builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
@@ -3539,7 +3621,7 @@ void StmtCodeGen::codeGen(const MethodCall& method_call) const {
     auto object_type = environment->getCurrentDefineScope()->getType(method_call.name.get());
     for (const auto& member : method_call.member_list) {
         if (!std::holds_alternative<Environment::DefineScope::Object>(object_type)) {
-            UnexpectedError("Not an object.")
+            UnexpectedError0(BadObject);
         }
         auto object = std::get<Environment::DefineScope::Object>(object_type);
         indices.push_back(jit.getCache()->getMemberIndex(jit.getCache()->getClass(object.class_name), member));
@@ -3666,7 +3748,7 @@ void StmtCodeGen::operator()(const StmtNode& stmt) const {
         codeGen(dynamic_cast<const ExpressionStmt&>(*stmt_data));
     }
     else {
-        UnexpectedError("Bad StmtNode type.");
+        UnexpectedError0(BadStmtNode);
     }
 }
 
@@ -3698,7 +3780,11 @@ void TypeEvalGen::operator()(const abaci::ast::ExprNode& node) const {
             push(std::get<AbaciValue>(node.get()).type);
             break;
         case ExprNode::VariableNode: {
-            auto type = environment->getCurrentDefineScope()->getType(std::get<Variable>(node.get()).get());
+            auto name = std::get<Variable>(node.get()).get();
+            if (!environment->getCurrentDefineScope()->isDefined(name)) {
+                LogicError1(VarNotExist, name);
+            }
+            auto type = environment->getCurrentDefineScope()->getType(name);
             if (std::holds_alternative<AbaciValue::Type>(type)) {
                 push(static_cast<AbaciValue::Type>(std::get<AbaciValue::Type>(type) & AbaciValue::TypeMask));
             }
@@ -3756,7 +3842,7 @@ Type `Cache::CacheClass` needs to return the type of an object being instantiate
                     break;
                 }
                 default:
-                    UnexpectedError("Not a function or class.");
+                    LogicError1(CallableNotExist, call.name);
             }
             break;
         }
@@ -3768,12 +3854,12 @@ A method call is evaluated to determine its object and return types, creating a 
         case ExprNode::MethodNode: {
             const auto& method_call = std::get<MethodValueCall>(node.get());
             if (!environment->getCurrentDefineScope()->isDefined(method_call.name.get())) {
-                LogicError("No such object.");
+                LogicError1(VarNotExist, method_call.name.get());
             }
             auto type = environment->getCurrentDefineScope()->getType(method_call.name.get());
             for (const auto& member : method_call.member_list) {
                 if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
-                    LogicError("Not an object.")
+                    LogicError0(BadObject);
                 }
                 auto object = std::get<Environment::DefineScope::Object>(type);
                 auto idx = cache->getMemberIndex(cache->getClass(object.class_name), member);
@@ -3811,10 +3897,13 @@ Access to data members inspects the instantiation type for the object and return
 ```cpp
         case ExprNode::DataNode: {
             const auto& data = std::get<DataCall>(node.get());
+            if (!environment->getCurrentDefineScope()->isDefined(data.name.get())) {
+                LogicError1(VarNotExist, data.name.get());
+            }
             auto type = environment->getCurrentDefineScope()->getType(data.name.get());
             for (const auto& member : data.member_list) {
                 if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
-                    LogicError("Not an object.")
+                    LogicError0(BadObject);
                 }
                 auto object = std::get<Environment::DefineScope::Object>(type);
                 auto idx = cache->getMemberIndex(cache->getClass(object.class_name), member);
@@ -3894,12 +3983,12 @@ Implicit promotions based upon `Operator` types are handled for `ListNode`.
                     break;
                 }
                 default:
-                    UnexpectedError("Unknown node type.");
+                    UnexpectedError0(BadAssociation);
             }
             break;
         }
         default:
-            UnexpectedError("Bad node type.");
+            UnexpectedError0(BadNode);
     }
 }
 ```
@@ -3909,7 +3998,7 @@ A simplified `promote()` produces the same results as for `ExprCodeGen::promote(
 ```cpp
 AbaciValue::Type TypeEvalGen::promote(Environment::DefineScope::Type type_a, Environment::DefineScope::Type type_b) const {
     if (!std::holds_alternative<AbaciValue::Type>(type_a) || !std::holds_alternative<AbaciValue::Type>(type_b)) {
-        LogicError("Bad type(s) for operator.")
+        LogicError0(NoObject);
     }
     auto a = std::get<AbaciValue::Type>(type_a), b = std::get<AbaciValue::Type>(type_b);
     if (a == b) {
@@ -3922,7 +4011,7 @@ AbaciValue::Type TypeEvalGen::promote(Environment::DefineScope::Type type_a, Env
         return std::max(a, b);
     }
     else {
-        LogicError("Bad types.");
+        LogicError0(BadType);
     }
 }
 ```
@@ -3935,7 +4024,7 @@ void TypeCodeGen::operator()(const abaci::ast::StmtList& stmts) const {
         environment->beginDefineScope();
         for (const auto& stmt : stmts) {
             if (dynamic_cast<const ReturnStmt*>(stmt.get()) && &stmt != &stmts.back()) {
-                LogicError("Return statement must be at end of block.");
+                LogicError0(ReturnAtEnd);
             }
             (*this)(stmt);
         }
@@ -3965,13 +4054,16 @@ void TypeCodeGen::codeGen(const PrintStmt& print) const {
             case 1:
                 break;
             default:
-                UnexpectedError("Bad field.");
+                UnexpectedError0(BadPrint);
         }
     }
 }
 
 template<>
 void TypeCodeGen::codeGen(const InitStmt& define) const {
+    if (environment->getCurrentDefineScope()->isDefined(define.name.get())) {
+        LogicError1(VarExists, define.name.get());
+    }
     TypeEvalGen expr(environment, cache);
     expr(define.value);
     auto result = expr.get();
@@ -3984,18 +4076,18 @@ void TypeCodeGen::codeGen(const InitStmt& define) const {
 template<>
 void TypeCodeGen::codeGen(const AssignStmt& assign) const {
     if (!environment->getCurrentDefineScope()->isDefined(assign.name.get())) {
-        LogicError("No such variable.");
+        LogicError1(VarNotExist, assign.name.get());
     }
     else if (std::holds_alternative<AbaciValue::Type>(environment->getCurrentDefineScope()->getType(assign.name.get()))
         && (std::get<AbaciValue::Type>(environment->getCurrentDefineScope()->getType(assign.name.get())) & AbaciValue::Constant)) {
-        LogicError("Cannot assign to constant.");
+        LogicError1(NoConstantAssign, assign.name.get());
     }
     TypeEvalGen expr(environment, cache);
     expr(assign.value);
     auto result = expr.get(), existing_type = environment->getCurrentDefineScope()->getType(assign.name.get());
     if (std::holds_alternative<AbaciValue::Type>(result) && std::holds_alternative<AbaciValue::Type>(existing_type)) {
         if (std::get<AbaciValue::Type>(result) != std::get<AbaciValue::Type>(existing_type)) {
-            LogicError("Cannot assign to variable with different type.");
+            LogicError1(VarType, assign.name.get());
         }
     }
     else if (std::holds_alternative<Environment::DefineScope::Object>(result)
@@ -4003,7 +4095,7 @@ void TypeCodeGen::codeGen(const AssignStmt& assign) const {
         if ((std::get<Environment::DefineScope::Object>(result).class_name
             != std::get<Environment::DefineScope::Object>(existing_type).class_name)
             || !(result == existing_type)) {
-            LogicError("Cannot assign to object of different type.");
+            LogicError1(ObjectType, assign.name.get());
         }
     }
 }
@@ -4059,7 +4151,7 @@ The specialization for `Function` performs the simple but important step of addi
 template<>
 void TypeCodeGen::codeGen(const Function& function) const {
     if (environment->getCurrentDefineScope()->getEnclosing()) {
-        LogicError("Functions must be defined at top-level.");
+        LogicError0(FuncTopLevel);
     }
     cache->addFunctionTemplate(function.name, function.parameters, function.function_body);
 }
@@ -4099,7 +4191,7 @@ void TypeCodeGen::codeGen(const FunctionCall& function_call) const {
 template<>
 void TypeCodeGen::codeGen(const ReturnStmt& return_stmt) const {
     if (!is_function) {
-        LogicError("Return statement can only appear inside a function.");
+        LogicError0(ReturnOnlyInFunc);
     }
     TypeEvalGen expr(environment, cache);
     expr(return_stmt.expression);
@@ -4108,7 +4200,7 @@ void TypeCodeGen::codeGen(const ReturnStmt& return_stmt) const {
         || (std::holds_alternative<AbaciValue::Type>(result) &&
             (std::get<AbaciValue::Type>(result) != AbaciValue::Unset))) {
         if (type_is_set && !(result == return_type)) {
-            LogicError("Function return type already set to different type.");
+            LogicError0(FuncTypeSet);
         }
         return_type = result;
         type_is_set = true;
@@ -4150,12 +4242,12 @@ Data member assignment is verified by looking up the object type and ensuring th
 template<>
 void TypeCodeGen::codeGen(const DataAssignStmt& data_assign) const {
     if (!environment->getCurrentDefineScope()->isDefined(data_assign.name.get())) {
-        LogicError("No such object.");
+        LogicError1(VarNotExist, data_assign.name.get());
     }
     auto type = environment->getCurrentDefineScope()->getType(data_assign.name.get());
     for (const auto& member : data_assign.member_list) {
         if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
-            LogicError("Not an object.")
+            LogicError0(BadObject);
         }
         auto object = std::get<Environment::DefineScope::Object>(type);
         auto idx = cache->getMemberIndex(cache->getClass(object.class_name), member);
@@ -4165,7 +4257,7 @@ void TypeCodeGen::codeGen(const DataAssignStmt& data_assign) const {
     expr(data_assign.value);
     auto result = expr.get();
     if (!(result == type)) {
-        LogicError("Cannot assign to member with different type.")
+        LogicError0(DataType);
     }
 }
 ```
@@ -4176,12 +4268,12 @@ Method calls are evaluated as for class `TypeEvalGen`.
 template<>
 void TypeCodeGen::codeGen(const MethodCall& method_call) const {
     if (!environment->getCurrentDefineScope()->isDefined(method_call.name.get())) {
-        LogicError("No such object.");
+        LogicError1(VarNotExist, method_call.name.get());
     }
     auto type = environment->getCurrentDefineScope()->getType(method_call.name.get());
     for (const auto& member : method_call.member_list) {
         if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
-            LogicError("Not an object.")
+            LogicError0(BadObject);
         }
         auto object = std::get<Environment::DefineScope::Object>(type);
         auto idx = cache->getMemberIndex(cache->getClass(object.class_name), member);
@@ -4217,7 +4309,7 @@ Expressions in statement context cause an error to be generated.
 ```cpp
 template<>
 void TypeCodeGen::codeGen([[maybe_unused]] const ExpressionStmt& expression_stmt) const {
-    LogicError("Expression not permitted in this context.")
+    LogicError0(NoExpression);
 }
 ```
 
@@ -4275,7 +4367,7 @@ void TypeCodeGen::operator()(const StmtNode& stmt) const {
         codeGen(dynamic_cast<const ExpressionStmt&>(*stmt_data));
     }
     else {
-        UnexpectedError("Bad StmtNode type.");
+        UnexpectedError0(BadStmtNode);
     }
 }
 
@@ -4353,7 +4445,7 @@ void Cache::addClassTemplate(const std::string& name, const std::vector<Variable
         classes.insert({ name, { variables, methods }});
     }
     else {
-        UnexpectedError("Class already exists.");
+        LogicError1(ClassExists, name);
     }
 }
 
@@ -4363,7 +4455,7 @@ void Cache::addFunctionTemplate(const std::string& name, const std::vector<Varia
         functions.insert({ name, { parameters, body }});
     }
     else {
-        UnexpectedError("Function already defined.");
+        LogicError1(FuncExists, name);
     }
 }
 ```
@@ -4398,11 +4490,11 @@ void Cache::addFunctionInstantiation(const std::string& name, const std::vector<
             }
         }
         else {
-            LogicError("Wrong number of arguments.");
+            LogicError2(WrongArgs, types.size(), iter->second.parameters.size());
         }
     }
     else {
-        LogicError("No such function.");
+        LogicError1(FuncNotExist, name);
     }
 }
 ```
@@ -4417,7 +4509,7 @@ Environment::DefineScope::Type Cache::getFunctionInstantiationType(const std::st
             return instantiation.return_type;
         }
     }
-    UnexpectedError("No such function instantiation.");
+    UnexpectedError1(NoInst, name);
 }
 
 std::shared_ptr<Environment::DefineScope> Cache::getFunctionInstantiationScope(const std::string& name, const std::vector<Environment::DefineScope::Type>& types) const {
@@ -4427,7 +4519,7 @@ std::shared_ptr<Environment::DefineScope> Cache::getFunctionInstantiationScope(c
             return instantiation.scope;
         }
     }
-    UnexpectedError("No such function instantiation.");
+    UnexpectedError1(NoInst, name);
 }
 
 const Cache::Function& Cache::getFunction(const std::string& name) const {
@@ -4435,7 +4527,7 @@ const Cache::Function& Cache::getFunction(const std::string& name) const {
     if (iter != functions.end()) {
         return iter->second;
     }
-    UnexpectedError("No such function.");
+    UnexpectedError1(FuncNotExist, name);
 }
 
 const Cache::Class& Cache::getClass(const std::string& name) const {
@@ -4443,7 +4535,7 @@ const Cache::Class& Cache::getClass(const std::string& name) const {
     if (iter != classes.end()) {
         return iter->second;
     }
-    UnexpectedError("No such class.");
+    UnexpectedError1(ClassNotExist, name);
 }
 
 unsigned Cache::getMemberIndex(const Class& cache_class, const Variable& member) const {
@@ -4451,7 +4543,7 @@ unsigned Cache::getMemberIndex(const Class& cache_class, const Variable& member)
     if (iter != cache_class.variables.end()) {
         return iter - cache_class.variables.begin();
     }
-    LogicError("No such member variable.")
+    LogicError1(DataNotExist, member.get());
 }
 
 Cache::Type Cache::getCacheType(const std::string& name) const {
@@ -4523,7 +4615,7 @@ public:
                 return type;
             }
         }
-        UnexpectedError("Type not found.")
+        UnexpectedError1(NoType, name);
     }
 ```
 
@@ -4639,13 +4731,13 @@ ExecFunctionType JIT::getExecFunction() {
     InitializeNativeTargetAsmPrinter();
     jit = jit_builder.create();
     if (!jit) {
-        UnexpectedError("Failed to create LLJIT instance");
+        UnexpectedError0(NoLLJIT);
     }
     if (auto err = (*jit)->addIRModule(ThreadSafeModule(std::move(module), std::move(context)))) {
         handleAllErrors(std::move(err), [&](ErrorInfoBase& eib) {
             errs() << "Error: " << eib.message() << '\n';
         });
-        UnexpectedError("Failed add IR module");
+        UnexpectedError0(NoModule);
     }
     if (auto err = (*jit)->getMainJITDylib().define(absoluteSymbols(SymbolMap{
             {(*jit)->getExecutionSession().intern("pow"), { reinterpret_cast<uintptr_t>(static_cast<double(*)(double,double)>(&pow)), JITSymbolFlags::Exported }},
@@ -4669,11 +4761,11 @@ ExecFunctionType JIT::getExecFunction() {
         handleAllErrors(std::move(err), [&](ErrorInfoBase& eib) {
             errs() << "Error: " << eib.message() << '\n';
         });
-        UnexpectedError("Failed to add symbols to module");
+        UnexpectedError0(NoSymbol);
     }
     auto func_symbol = (*jit)->lookup(function_name);
     if (!func_symbol) {
-        UnexpectedError("JIT function not found");
+        UnexpectedError0(NoJITFunc);
     }
     return reinterpret_cast<ExecFunctionType>(func_symbol->getAddress());
 }
@@ -4690,8 +4782,6 @@ The main program contained in this file is not intended to be fully-featured, bu
 In the case of a single program argument (`./abaci0 script.abaci`), this file is read in one go before `ast`, `environment` and `functions` are created (as empty). The call to `parse_block()` returns `true` if successful, causing use of class `TypeCodeGen` over the whole program. If no errors are caused by this stage, `jit` and `code_gen` are created and the resulting `programFunc` is called before the main program exits. Syntax errors cause the message `"Could not parse file."`, while other errors would result in exceptions being thrown; if errors are caught, the main program exits with a non-zero failure code.
 
 ```cpp
-const std::string version = "0.9.2 (2024-May-25)";
-
 int main(const int argc, const char **argv) {
     if (argc == 2) {
         std::ifstream input_file{ argv[1] };
@@ -4717,10 +4807,10 @@ int main(const int argc, const char **argv) {
                     return 0;
                 }
                 else {
-                    AbaciError("Could not parse file.");
+                    LogicError0(BadParse);
                 }
             }
-            catch (AbaciError& error) {
+            catch (std::exception& error) {
                 print(std::cout, "{}\n", error.what());
                 return 1;
             }
@@ -4732,7 +4822,7 @@ Where the Abaci0 interpreter is run without arguments, a version string is outpu
 
 ```cpp
     std::string input;
-    print(std::cout, "Abaci0 version {}\nEnter code, or a blank line to end:\n> ", version);
+    print(std::cout, runtime(InitialPrompt), Version);
     std::getline(std::cin, input);
 
     abaci::ast::StmtNode ast;
@@ -4741,7 +4831,7 @@ Where the Abaci0 interpreter is run without arguments, a version string is outpu
     while (!input.empty()) {
         std::string more_input = "\n";
         while (!abaci::parser::test_statement(input) && !more_input.empty()) {
-            print(std::cout, "? ");
+            print(std::cout, "{}", ContinuationPrompt);
             std::getline(std::cin, more_input);
             input += '\n' + more_input;
         }
@@ -4756,7 +4846,7 @@ Where the Abaci0 interpreter is run without arguments, a version string is outpu
                     auto stmtFunc = jit.getExecFunction();
                     stmtFunc();
                 }
-                catch (AbaciError& error) {
+                catch (std::exception& error) {
                     print(std::cout, "{}\n", error.what());
                     environment.reset();
                 }
@@ -4764,10 +4854,10 @@ Where the Abaci0 interpreter is run without arguments, a version string is outpu
             more_input = input;
         }
         else {
-            print(std::cout, "{}\n", "Syntax error.");
+            print(std::cout, "{}\n", SyntaxError);
             more_input.clear();
         }
-        print(std::cout, "> {}", more_input);
+        print(std::cout, "{}", more_input.empty() ? InputPrompt : ContinuationPrompt);
         std::getline(std::cin, input);
         if (!more_input.empty()) {
             input = more_input + '\n' + input;

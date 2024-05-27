@@ -1,6 +1,7 @@
 #include "Abaci.hpp"
 #include "utility/Report.hpp"
 #include "parser/Keywords.hpp"
+#include "parser/Messages.hpp"
 #include <charconv>
 #include <complex>
 #include <string>
@@ -10,6 +11,7 @@
 #include <fmt/format.h>
 using fmt::print;
 using fmt::format;
+using fmt::runtime;
 
 using abaci::utility::AbaciValue;
 using abaci::utility::Complex;
@@ -41,10 +43,10 @@ void printValue(AbaciValue *value) {
             fwrite(reinterpret_cast<const char*>(value->value.str->ptr), value->value.str->len, 1, stdout);
             break;
         case AbaciValue::Object:
-            print("<Instance of {}>", reinterpret_cast<const char*>(value->value.object->class_name));
+            print(runtime(InstanceOf), reinterpret_cast<const char*>(value->value.object->class_name));
             break;
         default:
-            print("{}?", static_cast<int>(value->type));
+            UnexpectedError1(UnknownType, static_cast<int>(value->type));
             break;
     }
 }
@@ -84,7 +86,7 @@ void complexMath(Complex *result, Operator op, Complex *operand1, Complex *opera
             r = std::pow(a, b);
             break;
         default:
-            UnexpectedError("Unknown operator.");
+            UnexpectedError0(BadOperator);
     }
     result->real = r.real();
     result->imag = r.imag();
@@ -176,7 +178,7 @@ void convertType(AbaciValue *to, AbaciValue *from) {
                     break;
                 }
                 default:
-                    LogicError("Bad type(s) for conversion.");
+                    LogicError1(BadConvType, INT);
             }
             break;
         case AbaciValue::Float:
@@ -196,7 +198,7 @@ void convertType(AbaciValue *to, AbaciValue *from) {
                     break;
                 }
                 default:
-                    LogicError("Bad type(s) for conversion.");
+                    LogicError1(BadConvType, FLOAT);
             }
             break;
         case AbaciValue::Complex:
@@ -240,7 +242,7 @@ void convertType(AbaciValue *to, AbaciValue *from) {
                     to->value.complex->imag = from->value.complex->imag;
                     break;
                 default:
-                    LogicError("Bad type(s) for conversion.");
+                    LogicError1(BadConvType, COMPLEX);
             }
             break;
         case AbaciValue::String: {
@@ -265,7 +267,7 @@ void convertType(AbaciValue *to, AbaciValue *from) {
                     str.assign(reinterpret_cast<const char*>(from->value.str->ptr), from->value.str->len);
                     break;
                 default:
-                    LogicError("Bad type(s) for conversion.");
+                    LogicError1(BadConvType, STR);
             }
             char *ptr = reinterpret_cast<char*>(to->value.str->ptr);
             if (str.size() < to->value.str->len) {
@@ -281,7 +283,7 @@ void convertType(AbaciValue *to, AbaciValue *from) {
                     to->type = AbaciValue::Float;
                     break;
                 default:
-                    LogicError("Must be complex type.");
+                    LogicError1(NeedType, COMPLEX);
             }
             break;
         case AbaciValue::Imaginary:
@@ -291,10 +293,10 @@ void convertType(AbaciValue *to, AbaciValue *from) {
                     to->type = AbaciValue::Float;
                     break;
                 default:
-                    LogicError("Must be complex type.");
+                    LogicError1(NeedType, COMPLEX);
             }
             break;
         default:
-            UnexpectedError("Bad target conversion type.")
+            UnexpectedError1(BadConvTarget, static_cast<int>(to->type));
     }
 }

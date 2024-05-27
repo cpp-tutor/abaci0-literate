@@ -4,6 +4,7 @@
 #include "utility/Utility.hpp"
 #include "utility/Environment.hpp"
 #include "utility/Report.hpp"
+#include "parser/Messages.hpp"
 #include "Cache.hpp"
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
@@ -55,7 +56,7 @@ public:
                 return type;
             }
         }
-        UnexpectedError("Type not found.")
+        UnexpectedError1(NoType, name);
     }
     ExecFunctionType getExecFunction();
 };

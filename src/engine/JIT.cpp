@@ -106,13 +106,13 @@ ExecFunctionType JIT::getExecFunction() {
     InitializeNativeTargetAsmPrinter();
     jit = jit_builder.create();
     if (!jit) {
-        UnexpectedError("Failed to create LLJIT instance");
+        UnexpectedError0(NoLLJIT);
     }
     if (auto err = (*jit)->addIRModule(ThreadSafeModule(std::move(module), std::move(context)))) {
         handleAllErrors(std::move(err), [&](ErrorInfoBase& eib) {
             errs() << "Error: " << eib.message() << '\n';
         });
-        UnexpectedError("Failed add IR module");
+        UnexpectedError0(NoModule);
     }
     if (auto err = (*jit)->getMainJITDylib().define(absoluteSymbols(SymbolMap{
             {(*jit)->getExecutionSession().intern("pow"), { reinterpret_cast<uintptr_t>(static_cast<double(*)(double,double)>(&pow)), JITSymbolFlags::Exported }},
@@ -136,11 +136,11 @@ ExecFunctionType JIT::getExecFunction() {
         handleAllErrors(std::move(err), [&](ErrorInfoBase& eib) {
             errs() << "Error: " << eib.message() << '\n';
         });
-        UnexpectedError("Failed to add symbols to module");
+        UnexpectedError0(NoSymbol);
     }
     auto func_symbol = (*jit)->lookup(function_name);
     if (!func_symbol) {
-        UnexpectedError("JIT function not found");
+        UnexpectedError0(NoJITFunc);
     }
     return reinterpret_cast<ExecFunctionType>(func_symbol->getAddress());
 }

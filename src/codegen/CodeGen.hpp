@@ -32,7 +32,7 @@ class ExprCodeGen {
     mutable std::vector<StackType> stack;
     Environment *environment;
     auto pop() const {
-        Assert(!stack.empty())
+        Assert(!stack.empty());
         auto value = stack.back();
         stack.pop_back();
         return value;
@@ -44,7 +44,7 @@ public:
     ExprCodeGen() = delete;
     ExprCodeGen(JIT& jit) : jit{ jit }, builder{ jit.getBuilder() }, module{ jit.getModule() }, environment{ jit.getEnvironment() } {}
     StackType get() const {
-        Assert(stack.size() == 1)
+        Assert(stack.size() == 1);
         return stack.front();
     }
     void operator()(const abaci::ast::ExprNode&) const;
@@ -74,7 +74,7 @@ class TypeEvalGen {
     Environment *environment;
     Cache *cache;
     auto pop() const {
-        Assert(!stack.empty())
+        Assert(!stack.empty());
         auto value = stack.back();
         stack.pop_back();
         return value;
@@ -86,7 +86,7 @@ public:
     TypeEvalGen() = delete;
     TypeEvalGen(Environment *environment, Cache *cache) : environment{ environment }, cache{ cache } {}
     Environment::DefineScope::Type get() const {
-        Assert(stack.size() == 1)
+        Assert(stack.size() == 1);
         return stack.front();
     }
     void operator()(const abaci::ast::ExprNode&) const;

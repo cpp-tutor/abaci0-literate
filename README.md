@@ -36,7 +36,9 @@ python3 literate.py Abaci0.lit
 
 ## Roadmap
 
-Numerous things to add before a 1.0.0 release. Please raise issues or pull requests to contribute the Roadmap.
+Release 1.0.0 is believed to be feature-complete with no known defects. (Please raise issues or submit pull requests.)
+
+Future development of this project is likely to be fixes only, no major language enhancements or additions are planned. I am interested in adding support for the expectation operator of Spirit X3 (`>` instead of `>>`), however this would most likely involve manual testing of each rule as the changes are made to avoid breakages.
 
 ## Version history
 
@@ -55,6 +57,8 @@ Numerous things to add before a 1.0.0 release. Please raise issues or pull reque
 * **0.9.1** (2024-May-22) Fixes for VS2022, improved name mangling, self-assignment.
 
 * **0.9.2** (2024-May-25) User input and type conversions.
+
+* **1.0.0** (2024-May-27) User messages now have their own header file. Small changes to front-end with improved error diagnostics for defective code.
 
 ## License
 

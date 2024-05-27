@@ -1,5 +1,6 @@
 #include "CodeGen.hpp"
 #include "utility/Utility.hpp"
+#include "parser/Messages.hpp"
 #include <llvm/IR/Constants.h>
 
 using namespace llvm;
@@ -41,7 +42,11 @@ void TypeEvalGen::operator()(const abaci::ast::ExprNode& node) const {
             push(std::get<AbaciValue>(node.get()).type);
             break;
         case ExprNode::VariableNode: {
-            auto type = environment->getCurrentDefineScope()->getType(std::get<Variable>(node.get()).get());
+            auto name = std::get<Variable>(node.get()).get();
+            if (!environment->getCurrentDefineScope()->isDefined(name)) {
+                LogicError1(VarNotExist, name);
+            }
+            auto type = environment->getCurrentDefineScope()->getType(name);
             if (std::holds_alternative<AbaciValue::Type>(type)) {
                 push(static_cast<AbaciValue::Type>(std::get<AbaciValue::Type>(type) & AbaciValue::TypeMask));
             }
@@ -89,19 +94,19 @@ void TypeEvalGen::operator()(const abaci::ast::ExprNode& node) const {
                     break;
                 }
                 default:
-                    UnexpectedError("Not a function or class.");
+                    LogicError1(CallableNotExist, call.name);
             }
             break;
         }
         case ExprNode::MethodNode: {
             const auto& method_call = std::get<MethodValueCall>(node.get());
             if (!environment->getCurrentDefineScope()->isDefined(method_call.name.get())) {
-                LogicError("No such object.");
+                LogicError1(VarNotExist, method_call.name.get());
             }
             auto type = environment->getCurrentDefineScope()->getType(method_call.name.get());
             for (const auto& member : method_call.member_list) {
                 if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
-                    LogicError("Not an object.")
+                    LogicError0(BadObject);
                 }
                 auto object = std::get<Environment::DefineScope::Object>(type);
                 auto idx = cache->getMemberIndex(cache->getClass(object.class_name), member);
@@ -134,10 +139,13 @@ void TypeEvalGen::operator()(const abaci::ast::ExprNode& node) const {
         }
         case ExprNode::DataNode: {
             const auto& data = std::get<DataCall>(node.get());
+            if (!environment->getCurrentDefineScope()->isDefined(data.name.get())) {
+                LogicError1(VarNotExist, data.name.get());
+            }
             auto type = environment->getCurrentDefineScope()->getType(data.name.get());
             for (const auto& member : data.member_list) {
                 if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
-                    LogicError("Not an object.")
+                    LogicError0(BadObject);
                 }
                 auto object = std::get<Environment::DefineScope::Object>(type);
                 auto idx = cache->getMemberIndex(cache->getClass(object.class_name), member);
@@ -207,18 +215,18 @@ void TypeEvalGen::operator()(const abaci::ast::ExprNode& node) const {
                     break;
                 }
                 default:
-                    UnexpectedError("Unknown node type.");
+                    UnexpectedError0(BadAssociation);
             }
             break;
         }
         default:
-            UnexpectedError("Bad node type.");
+            UnexpectedError0(BadNode);
     }
 }
 
 AbaciValue::Type TypeEvalGen::promote(Environment::DefineScope::Type type_a, Environment::DefineScope::Type type_b) const {
     if (!std::holds_alternative<AbaciValue::Type>(type_a) || !std::holds_alternative<AbaciValue::Type>(type_b)) {
-        LogicError("Bad type(s) for operator.")
+        LogicError0(NoObject);
     }
     auto a = std::get<AbaciValue::Type>(type_a), b = std::get<AbaciValue::Type>(type_b);
     if (a == b) {
@@ -231,7 +239,7 @@ AbaciValue::Type TypeEvalGen::promote(Environment::DefineScope::Type type_a, Env
         return std::max(a, b);
     }
     else {
-        LogicError("Bad types.");
+        LogicError0(BadType);
     }
 }
 
@@ -240,7 +248,7 @@ void TypeCodeGen::operator()(const abaci::ast::StmtList& stmts) const {
         environment->beginDefineScope();
         for (const auto& stmt : stmts) {
             if (dynamic_cast<const ReturnStmt*>(stmt.get()) && &stmt != &stmts.back()) {
-                LogicError("Return statement must be at end of block.");
+                LogicError0(ReturnAtEnd);
             }
             (*this)(stmt);
         }
@@ -266,13 +274,16 @@ void TypeCodeGen::codeGen(const PrintStmt& print) const {
             case 1:
                 break;
             default:
-                UnexpectedError("Bad field.");
+                UnexpectedError0(BadPrint);
         }
     }
 }
 
 template<>
 void TypeCodeGen::codeGen(const InitStmt& define) const {
+    if (environment->getCurrentDefineScope()->isDefined(define.name.get())) {
+        LogicError1(VarExists, define.name.get());
+    }
     TypeEvalGen expr(environment, cache);
     expr(define.value);
     auto result = expr.get();
@@ -285,18 +296,18 @@ void TypeCodeGen::codeGen(const InitStmt& define) const {
 template<>
 void TypeCodeGen::codeGen(const AssignStmt& assign) const {
     if (!environment->getCurrentDefineScope()->isDefined(assign.name.get())) {
-        LogicError("No such variable.");
+        LogicError1(VarNotExist, assign.name.get());
     }
     else if (std::holds_alternative<AbaciValue::Type>(environment->getCurrentDefineScope()->getType(assign.name.get()))
         && (std::get<AbaciValue::Type>(environment->getCurrentDefineScope()->getType(assign.name.get())) & AbaciValue::Constant)) {
-        LogicError("Cannot assign to constant.");
+        LogicError1(NoConstantAssign, assign.name.get());
     }
     TypeEvalGen expr(environment, cache);
     expr(assign.value);
     auto result = expr.get(), existing_type = environment->getCurrentDefineScope()->getType(assign.name.get());
     if (std::holds_alternative<AbaciValue::Type>(result) && std::holds_alternative<AbaciValue::Type>(existing_type)) {
         if (std::get<AbaciValue::Type>(result) != std::get<AbaciValue::Type>(existing_type)) {
-            LogicError("Cannot assign to variable with different type.");
+            LogicError1(VarType, assign.name.get());
         }
     }
     else if (std::holds_alternative<Environment::DefineScope::Object>(result)
@@ -304,7 +315,7 @@ void TypeCodeGen::codeGen(const AssignStmt& assign) const {
         if ((std::get<Environment::DefineScope::Object>(result).class_name
             != std::get<Environment::DefineScope::Object>(existing_type).class_name)
             || !(result == existing_type)) {
-            LogicError("Cannot assign to object of different type.");
+            LogicError1(ObjectType, assign.name.get());
         }
     }
 }
@@ -356,7 +367,7 @@ void TypeCodeGen::codeGen(const CaseStmt& case_stmt) const {
 template<>
 void TypeCodeGen::codeGen(const Function& function) const {
     if (environment->getCurrentDefineScope()->getEnclosing()) {
-        LogicError("Functions must be defined at top-level.");
+        LogicError0(FuncTopLevel);
     }
     cache->addFunctionTemplate(function.name, function.parameters, function.function_body);
 }
@@ -388,7 +399,7 @@ void TypeCodeGen::codeGen(const FunctionCall& function_call) const {
 template<>
 void TypeCodeGen::codeGen(const ReturnStmt& return_stmt) const {
     if (!is_function) {
-        LogicError("Return statement can only appear inside a function.");
+        LogicError0(ReturnOnlyInFunc);
     }
     TypeEvalGen expr(environment, cache);
     expr(return_stmt.expression);
@@ -397,7 +408,7 @@ void TypeCodeGen::codeGen(const ReturnStmt& return_stmt) const {
         || (std::holds_alternative<AbaciValue::Type>(result) &&
             (std::get<AbaciValue::Type>(result) != AbaciValue::Unset))) {
         if (type_is_set && !(result == return_type)) {
-            LogicError("Function return type already set to different type.");
+            LogicError0(FuncTypeSet);
         }
         return_type = result;
         type_is_set = true;
@@ -427,12 +438,12 @@ void TypeCodeGen::codeGen(const Class& class_template) const {
 template<>
 void TypeCodeGen::codeGen(const DataAssignStmt& data_assign) const {
     if (!environment->getCurrentDefineScope()->isDefined(data_assign.name.get())) {
-        LogicError("No such object.");
+        LogicError1(VarNotExist, data_assign.name.get());
     }
     auto type = environment->getCurrentDefineScope()->getType(data_assign.name.get());
     for (const auto& member : data_assign.member_list) {
         if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
-            LogicError("Not an object.")
+            LogicError0(BadObject);
         }
         auto object = std::get<Environment::DefineScope::Object>(type);
         auto idx = cache->getMemberIndex(cache->getClass(object.class_name), member);
@@ -442,19 +453,19 @@ void TypeCodeGen::codeGen(const DataAssignStmt& data_assign) const {
     expr(data_assign.value);
     auto result = expr.get();
     if (!(result == type)) {
-        LogicError("Cannot assign to member with different type.")
+        LogicError0(DataType);
     }
 }
 
 template<>
 void TypeCodeGen::codeGen(const MethodCall& method_call) const {
     if (!environment->getCurrentDefineScope()->isDefined(method_call.name.get())) {
-        LogicError("No such object.");
+        LogicError1(VarNotExist, method_call.name.get());
     }
     auto type = environment->getCurrentDefineScope()->getType(method_call.name.get());
     for (const auto& member : method_call.member_list) {
         if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
-            LogicError("Not an object.")
+            LogicError0(BadObject);
         }
         auto object = std::get<Environment::DefineScope::Object>(type);
         auto idx = cache->getMemberIndex(cache->getClass(object.class_name), member);
@@ -486,7 +497,7 @@ void TypeCodeGen::codeGen(const MethodCall& method_call) const {
 
 template<>
 void TypeCodeGen::codeGen([[maybe_unused]] const ExpressionStmt& expression_stmt) const {
-    LogicError("Expression not permitted in this context.")
+    LogicError0(NoExpression);
 }
 
 void TypeCodeGen::operator()(const StmtNode& stmt) const {
@@ -540,7 +551,7 @@ void TypeCodeGen::operator()(const StmtNode& stmt) const {
         codeGen(dynamic_cast<const ExpressionStmt&>(*stmt_data));
     }
     else {
-        UnexpectedError("Bad StmtNode type.");
+        UnexpectedError0(BadStmtNode);
     }
 }
 

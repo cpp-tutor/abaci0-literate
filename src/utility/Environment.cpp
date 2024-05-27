@@ -1,5 +1,6 @@
 #include "Environment.hpp"
 #include "utility/Report.hpp"
+#include "parser/Messages.hpp"
 #include <charconv>
 #include <cctype>
 
@@ -11,7 +12,7 @@ void Environment::DefineScope::setType(const std::string& name, const Environmen
         types.insert({ name, type });
     }
     else {
-        UnexpectedError("Variable " + name + " already exists.");
+        UnexpectedError1(VarExists, name);
     }
 }
 
@@ -24,7 +25,7 @@ Environment::DefineScope::Type Environment::DefineScope::getType(const std::stri
         return enclosing->getType(name);
     }
     else {
-        UnexpectedError("No such variable " + name + ".");
+        UnexpectedError1(VarNotExist, name);
     }
 }
 
@@ -56,7 +57,7 @@ void Environment::Scope::defineValue(const std::string& name, const AbaciValue& 
         variables.insert({ name, value });
     }
     else {
-        UnexpectedError("Variable " + name + " already exists.");
+        UnexpectedError1(VarExists, name);
     }
 }
 
@@ -67,14 +68,14 @@ void Environment::Scope::setValue(const std::string& name, const AbaciValue& val
             iter->second = value;
         }
         else {
-            UnexpectedError("Variable " + name + " already defined with different type.");
+            UnexpectedError1(VarType, name);
         }
     }
     else if (enclosing) {
         enclosing->setValue(name, value);
     }
     else {
-        UnexpectedError("Variable " + name + " does not exist.");
+        UnexpectedError1(VarNotExist, name);
     }
 }
 
@@ -87,7 +88,7 @@ AbaciValue *Environment::Scope::getValue(const std::string& name) {
         return enclosing->getValue(name);
     }
     else {
-       UnexpectedError("No such variable " + name + ".");
+        UnexpectedError1(VarNotExist, name);
     }
 }
 
@@ -99,7 +100,7 @@ std::string mangled(const std::string& name, const std::vector<Environment::Defi
             char buffer[16];
             auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer), static_cast<int>(ch), 16);
             if (ec != std::errc()) {
-                UnexpectedError("Bad numeric conversion.");
+                UnexpectedError0(BadNumericConv);
             }
             *ptr = '\0';
             function_name.append(buffer);
@@ -108,7 +109,7 @@ std::string mangled(const std::string& name, const std::vector<Environment::Defi
             function_name.push_back(ch);
         }
         else {
-            UnexpectedError("Bad function name.")
+            UnexpectedError0(BadChar);
         }
     }
     for (const auto& parameter_type : types) {
@@ -118,7 +119,7 @@ std::string mangled(const std::string& name, const std::vector<Environment::Defi
             auto [ptr, ec] = std::to_chars(buffer, buffer + sizeof(buffer),
                 static_cast<int>(std::get<AbaciValue::Type>(parameter_type) & AbaciValue::TypeMask), 10);
             if (ec != std::errc()) {
-                UnexpectedError("Bad numeric conversion.");
+                UnexpectedError0(BadNumericConv);
             }
             *ptr = '\0';
             function_name.append(buffer);
@@ -141,7 +142,7 @@ AbaciValue::Type environmentTypeToType(const Environment::DefineScope::Type& env
         return AbaciValue::Object;
     }
     else {
-        UnexpectedError("Bad type.")
+        UnexpectedError0(BadType);
     }
 }
 
@@ -173,7 +174,7 @@ bool operator==(const Environment::DefineScope::Type& lhs, const Environment::De
             return true;
         }
     }
-    UnexpectedError("Bad type.");
+    UnexpectedError0(BadType);
 }
 
 } // namespace abaci::utility

@@ -31,6 +31,15 @@ const std::unordered_map<std::string,Operator> Operators{
     { TO, Operator::To }
 };
 
+const std::unordered_map<std::string,AbaciValue::Type> TypeConversions{
+    { INT, AbaciValue::Integer },
+    { FLOAT, AbaciValue::Float },
+    { COMPLEX, AbaciValue::Complex },
+    { STR, AbaciValue::String },
+    { REAL, AbaciValue::Real },
+    { IMAG, AbaciValue::Imaginary }
+};
+
 void AbaciValue::clone(const AbaciValue& rhs) {
     switch (rhs.type & TypeMask) {
         case Nil:

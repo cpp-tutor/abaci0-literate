@@ -1,5 +1,6 @@
 #include "CodeGen.hpp"
 #include "utility/Utility.hpp"
+#include "parser/Messages.hpp"
 #include <llvm/IR/Constants.h>
 
 using namespace llvm;
@@ -85,12 +86,12 @@ void StmtCodeGen::codeGen(const PrintStmt& print) const {
                     case Operator::SemiColon:
                         break;
                     default:
-                        UnexpectedError("Bad print operator.");
+                        UnexpectedError0(BadOperator);
                 }
                 break;
             }
             default:
-                UnexpectedError("Bad field.");
+                UnexpectedError0(BadPrint);
                 break;
         }
     }
@@ -133,11 +134,11 @@ void StmtCodeGen::codeGen(const InitStmt& define) const {
 template<>
 void StmtCodeGen::codeGen(const AssignStmt& assign) const {
     if (!environment->getCurrentDefineScope()->isDefined(assign.name.get())) {
-        LogicError("No such variable.");
+        UnexpectedError1(VarNotExist, assign.name.get());
     }
     else if (auto type = environment->getCurrentDefineScope()->getType(assign.name.get());
         std::holds_alternative<AbaciValue::Type>(type) && (std::get<AbaciValue::Type>(type) & AbaciValue::Constant)) {
-        LogicError("Cannot assign to constant.");
+        UnexpectedError1(NoConstantAssign, assign.name.get());
     }
     Constant *name = ConstantDataArray::getString(module.getContext(), assign.name.get().c_str());
     AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
@@ -146,7 +147,7 @@ void StmtCodeGen::codeGen(const AssignStmt& assign) const {
     expr(assign.value);
     auto result = expr.get();
     if (!(environment->getCurrentDefineScope()->getType(assign.name.get()) == result.second)) {
-        LogicError("Cannot assign to variable with different type.");
+        LogicError1(VarType, assign.name.get());
     }
     auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
     builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
@@ -281,7 +282,7 @@ void StmtCodeGen::codeGen(const CaseStmt& case_stmt) const {
                 break;
             }
             default:
-                UnexpectedError("Not yet implemented.");
+                LogicError0(BadType);
         }
         builder.CreateCondBr(is_match, case_blocks.at(block_number * 2 + 1), case_blocks.at(block_number * 2 + 2));
         builder.SetInsertPoint(case_blocks.at(block_number * 2 + 1));
@@ -380,7 +381,7 @@ void StmtCodeGen::codeGen([[maybe_unused]] const Class& class_template) const {
 template<>
 void StmtCodeGen::codeGen(const DataAssignStmt& data_assign) const {
     if (!environment->getCurrentDefineScope()->isDefined(data_assign.name.get())) {
-        UnexpectedError("No such object.");
+        UnexpectedError1(VarNotExist, data_assign.name.get());
     }
     Constant *name = ConstantDataArray::getString(module.getContext(), data_assign.name.get().c_str());
     AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
@@ -389,7 +390,7 @@ void StmtCodeGen::codeGen(const DataAssignStmt& data_assign) const {
     auto type = environment->getCurrentDefineScope()->getType(data_assign.name.get());
     for (const auto& member : data_assign.member_list) {
         if (!std::holds_alternative<Environment::DefineScope::Object>(type)) {
-            UnexpectedError("Not an object.")
+            UnexpectedError0(BadObject);
         }
         auto object = std::get<Environment::DefineScope::Object>(type);
         indices.push_back(jit.getCache()->getMemberIndex(jit.getCache()->getClass(object.class_name), member));
@@ -408,7 +409,7 @@ void StmtCodeGen::codeGen(const DataAssignStmt& data_assign) const {
     expr(data_assign.value);
     auto result = expr.get();
     if (!(type == result.second)) {
-        UnexpectedError("Cannot assign to member with different type.")
+        UnexpectedError0(DataType);
     }
     auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
     builder.CreateStore(result.first, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
@@ -427,7 +428,7 @@ void StmtCodeGen::codeGen(const MethodCall& method_call) const {
     auto object_type = environment->getCurrentDefineScope()->getType(method_call.name.get());
     for (const auto& member : method_call.member_list) {
         if (!std::holds_alternative<Environment::DefineScope::Object>(object_type)) {
-            UnexpectedError("Not an object.")
+            UnexpectedError0(BadObject);
         }
         auto object = std::get<Environment::DefineScope::Object>(object_type);
         indices.push_back(jit.getCache()->getMemberIndex(jit.getCache()->getClass(object.class_name), member));
@@ -546,7 +547,7 @@ void StmtCodeGen::operator()(const StmtNode& stmt) const {
         codeGen(dynamic_cast<const ExpressionStmt&>(*stmt_data));
     }
     else {
-        UnexpectedError("Bad StmtNode type.");
+        UnexpectedError0(BadStmtNode);
     }
 }
 

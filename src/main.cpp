@@ -4,6 +4,7 @@
 #include "codegen/CodeGen.hpp"
 #include "engine/JIT.hpp"
 #include "utility/Utility.hpp"
+#include "parser/Messages.hpp"
 #include <fmt/core.h>
 #include <fmt/format.h>
 #include <fmt/ostream.h>
@@ -11,8 +12,7 @@
 #include <fstream>
 #include <string>
 using fmt::print;
-
-const std::string version = "0.9.2 (2024-May-25)";
+using fmt::runtime;
 
 int main(const int argc, const char **argv) {
     if (argc == 2) {
@@ -39,17 +39,17 @@ int main(const int argc, const char **argv) {
                     return 0;
                 }
                 else {
-                    AbaciError("Could not parse file.");
+                    LogicError0(BadParse);
                 }
             }
-            catch (AbaciError& error) {
+            catch (std::exception& error) {
                 print(std::cout, "{}\n", error.what());
                 return 1;
             }
         }
     }
     std::string input;
-    print(std::cout, "Abaci0 version {}\nEnter code, or a blank line to end:\n> ", version);
+    print(std::cout, runtime(InitialPrompt), Version);
     std::getline(std::cin, input);
 
     abaci::ast::StmtNode ast;
@@ -58,7 +58,7 @@ int main(const int argc, const char **argv) {
     while (!input.empty()) {
         std::string more_input = "\n";
         while (!abaci::parser::test_statement(input) && !more_input.empty()) {
-            print(std::cout, "? ");
+            print(std::cout, "{}", ContinuationPrompt);
             std::getline(std::cin, more_input);
             input += '\n' + more_input;
         }
@@ -73,7 +73,7 @@ int main(const int argc, const char **argv) {
                     auto stmtFunc = jit.getExecFunction();
                     stmtFunc();
                 }
-                catch (AbaciError& error) {
+                catch (std::exception& error) {
                     print(std::cout, "{}\n", error.what());
                     environment.reset();
                 }
@@ -81,10 +81,10 @@ int main(const int argc, const char **argv) {
             more_input = input;
         }
         else {
-            print(std::cout, "{}\n", "Syntax error.");
+            print(std::cout, "{}\n", SyntaxError);
             more_input.clear();
         }
-        print(std::cout, "> {}", more_input);
+        print(std::cout, "{}", more_input.empty() ? InputPrompt : ContinuationPrompt);
         std::getline(std::cin, input);
         if (!more_input.empty()) {
             input = more_input + '\n' + input;
