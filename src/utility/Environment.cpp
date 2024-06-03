@@ -6,7 +6,7 @@
 
 namespace abaci::utility {
 
-void Environment::DefineScope::setType(const std::string& name, const Environment::DefineScope::Type type) {
+void Environment::DefineScope::setType(const std::string& name, const Environment::DefineScope::Type& type) {
     auto iter = types.find(name);
     if (iter == types.end()) {
         types.insert({ name, type });

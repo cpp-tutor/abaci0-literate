@@ -60,6 +60,8 @@ Future development of this project is likely to be fixes only, no major language
 
 * **1.0.0** (2024-May-27) User messages now have their own header file. Small changes to front-end with improved error diagnostics for defective code.
 
+* **1.0.1** (2024-Jun-03) Functions and methods can now return object values, which allows for creation of factory functions.
+
 ## License
 
 All writing and source code released under a Creative Commmons License, &copy;2023-24 Richard Spencer

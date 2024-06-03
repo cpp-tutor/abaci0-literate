@@ -50,6 +50,7 @@ public:
     void operator()(const abaci::ast::ExprNode&) const;
     Value *toBoolean(StackType&) const;
     AbaciValue::Type promote(StackType&, StackType&) const;
+    Value *cloneValue(Value*, const Environment::DefineScope::Type&) const;
 };
 
 class StmtCodeGen {

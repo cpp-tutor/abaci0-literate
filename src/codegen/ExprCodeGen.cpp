@@ -151,42 +151,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                     builder.CreateCall(module.getFunction(function_name), {});
                     auto abaci_value = builder.CreateCall(module.getFunction("getVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()) });
                     Value *raw_value = builder.CreateLoad(builder.getInt64Ty(), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
-                    Value *value;
-                    switch (environmentTypeToType(type)) {
-                        case AbaciValue::Nil:
-                        case AbaciValue::Integer:
-                            value = raw_value;
-                            break;
-                        case AbaciValue::Boolean:
-                            value = builder.CreateICmpNE(raw_value, ConstantInt::get(builder.getInt64Ty(), 0));
-                            break;
-                        case AbaciValue::Float:
-                            value = builder.CreateBitCast(raw_value, builder.getDoubleTy());
-                            break;
-                        case AbaciValue::Complex: {
-                            raw_value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.Complex"), 0));
-                            value = builder.CreateAlloca(jit.getNamedType("struct.Complex"));
-                            Value *real = builder.CreateLoad(builder.getDoubleTy(), builder.CreateStructGEP(jit.getNamedType("struct.Complex"), raw_value, 0));
-                            Value *imag = builder.CreateLoad(builder.getDoubleTy(), builder.CreateStructGEP(jit.getNamedType("struct.Complex"), raw_value, 1));
-                            builder.CreateStore(real, builder.CreateStructGEP(jit.getNamedType("struct.Complex"), value, 0));
-                            builder.CreateStore(imag, builder.CreateStructGEP(jit.getNamedType("struct.Complex"), value, 1));
-                            break;
-                        }
-                        case AbaciValue::String: {
-                            raw_value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.String"), 0));
-                            value = builder.CreateAlloca(jit.getNamedType("struct.String"));
-                            Value *str = builder.CreateLoad(builder.getInt8PtrTy(), builder.CreateStructGEP(jit.getNamedType("struct.String"), raw_value, 0));
-                            Value *len = builder.CreateLoad(builder.getInt64Ty(), builder.CreateStructGEP(jit.getNamedType("struct.String"), raw_value, 1));
-                            AllocaInst *ptr = builder.CreateAlloca(builder.getInt8Ty(), len);
-                            builder.CreateMemCpy(ptr, MaybeAlign(1), str, MaybeAlign(1), len);
-                            builder.CreateStore(ptr, builder.CreateStructGEP(jit.getNamedType("struct.String"), value, 0));
-                            builder.CreateStore(len, builder.CreateStructGEP(jit.getNamedType("struct.String"), value, 1));
-                            break;
-                        }
-                        default:
-                            UnexpectedError0(BadReturnType);
-                    }
-                    push({ value, type });
+                    push({ cloneValue(raw_value, type), type });
                     builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
                     environment->endDefineScope();
                     break;
@@ -349,42 +314,7 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
             builder.CreateCall(module.getFunction(mangled(function_name, types)), {});
             auto abaci_value = builder.CreateCall(module.getFunction("getVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()) });
             Value *raw_value = builder.CreateLoad(builder.getInt64Ty(), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), abaci_value, 0));
-            Value *value;
-            switch (environmentTypeToType(type)) {
-                case AbaciValue::Nil:
-                case AbaciValue::Integer:
-                    value = raw_value;
-                    break;
-                case AbaciValue::Boolean:
-                    value = builder.CreateICmpNE(raw_value, ConstantInt::get(builder.getInt64Ty(), 0));
-                    break;
-                case AbaciValue::Float:
-                    value = builder.CreateBitCast(raw_value, builder.getDoubleTy());
-                    break;
-                case AbaciValue::Complex: {
-                    raw_value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.Complex"), 0));
-                    value = builder.CreateAlloca(jit.getNamedType("struct.Complex"));
-                    Value *real = builder.CreateLoad(builder.getDoubleTy(), builder.CreateStructGEP(jit.getNamedType("struct.Complex"), raw_value, 0));
-                    Value *imag = builder.CreateLoad(builder.getDoubleTy(), builder.CreateStructGEP(jit.getNamedType("struct.Complex"), raw_value, 1));
-                    builder.CreateStore(real, builder.CreateStructGEP(jit.getNamedType("struct.Complex"), value, 0));
-                    builder.CreateStore(imag, builder.CreateStructGEP(jit.getNamedType("struct.Complex"), value, 1));
-                    break;
-                }
-                case AbaciValue::String: {
-                    raw_value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.String"), 0));
-                    value = builder.CreateAlloca(jit.getNamedType("struct.String"));
-                    Value *str = builder.CreateLoad(builder.getInt8PtrTy(), builder.CreateStructGEP(jit.getNamedType("struct.String"), raw_value, 0));
-                    Value *len = builder.CreateLoad(builder.getInt64Ty(), builder.CreateStructGEP(jit.getNamedType("struct.String"), raw_value, 1));
-                    AllocaInst *ptr = builder.CreateAlloca(builder.getInt8Ty(), len);
-                    builder.CreateMemCpy(ptr, MaybeAlign(1), str, MaybeAlign(1), len);
-                    builder.CreateStore(ptr, builder.CreateStructGEP(jit.getNamedType("struct.String"), value, 0));
-                    builder.CreateStore(len, builder.CreateStructGEP(jit.getNamedType("struct.String"), value, 1));
-                    break;
-                }
-                default:
-                    UnexpectedError0(BadReturnType);
-            }
-            push({ value, type });
+            push({ cloneValue(raw_value, type), type });
             builder.CreateCall(module.getFunction("endScope"), { typed_environment_ptr });
             builder.CreateCall(module.getFunction("unsetThisPtr"), { typed_environment_ptr });
             environment->endDefineScope();
@@ -989,6 +919,71 @@ Value *ExprCodeGen::toBoolean(StackType& v) const {
             UnexpectedError0(NoBoolean);
     }
     return boolean;
+}
+
+Value *ExprCodeGen::cloneValue(Value* raw_value, const Environment::DefineScope::Type& type) const {
+    Value *value;
+    switch (environmentTypeToType(type)) {
+        case AbaciValue::Nil:
+        case AbaciValue::Integer:
+            value = raw_value;
+            break;
+        case AbaciValue::Boolean:
+            value = builder.CreateICmpNE(raw_value, ConstantInt::get(builder.getInt64Ty(), 0));
+            break;
+        case AbaciValue::Float:
+            value = builder.CreateBitCast(raw_value, builder.getDoubleTy());
+            break;
+        case AbaciValue::Complex: {
+            raw_value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.Complex"), 0));
+            value = builder.CreateAlloca(jit.getNamedType("struct.Complex"));
+            Value *real = builder.CreateLoad(builder.getDoubleTy(), builder.CreateStructGEP(jit.getNamedType("struct.Complex"), raw_value, 0));
+            Value *imag = builder.CreateLoad(builder.getDoubleTy(), builder.CreateStructGEP(jit.getNamedType("struct.Complex"), raw_value, 1));
+            builder.CreateStore(real, builder.CreateStructGEP(jit.getNamedType("struct.Complex"), value, 0));
+            builder.CreateStore(imag, builder.CreateStructGEP(jit.getNamedType("struct.Complex"), value, 1));
+            break;
+        }
+        case AbaciValue::String: {
+            raw_value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.String"), 0));
+            value = builder.CreateAlloca(jit.getNamedType("struct.String"));
+            Value *str = builder.CreateLoad(builder.getInt8PtrTy(), builder.CreateStructGEP(jit.getNamedType("struct.String"), raw_value, 0));
+            Value *len = builder.CreateLoad(builder.getInt64Ty(), builder.CreateStructGEP(jit.getNamedType("struct.String"), raw_value, 1));
+            AllocaInst *ptr = builder.CreateAlloca(builder.getInt8Ty(), len);
+            builder.CreateMemCpy(ptr, MaybeAlign(1), str, MaybeAlign(1), len);
+            builder.CreateStore(ptr, builder.CreateStructGEP(jit.getNamedType("struct.String"), value, 0));
+            builder.CreateStore(len, builder.CreateStructGEP(jit.getNamedType("struct.String"), value, 1));
+            break;
+        }
+        case AbaciValue::Object: {
+            const auto object = std::get<Environment::DefineScope::Object>(type);
+            value = builder.CreateBitCast(raw_value, PointerType::get(jit.getNamedType("struct.Object"), 0));
+            ArrayType *array = ArrayType::get(jit.getNamedType("struct.AbaciValue"), object.object_types.size());
+            AllocaInst *array_value = builder.CreateAlloca(array, nullptr);
+            auto read_array = builder.CreateLoad(PointerType::get(array, 0), builder.CreateStructGEP(jit.getNamedType("struct.Object"), value, 2));
+            for (int idx = 0; const auto& elem_type : object.object_types) {
+                Value *read_elem_ptr = builder.CreateGEP(array, read_array, { builder.getInt32(0), builder.getInt32(idx) });
+                Value *read_elem_value = builder.CreateLoad(builder.getInt64Ty(), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), read_elem_ptr, 0));
+                auto result = cloneValue(read_elem_value, elem_type);
+                Value *elem_ptr = builder.CreateGEP(array, array_value, { builder.getInt32(0), builder.getInt32(idx) });
+                builder.CreateStore(result, builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), elem_ptr, 0));
+                builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), environmentTypeToType(elem_type)), builder.CreateStructGEP(jit.getNamedType("struct.AbaciValue"), elem_ptr, 1));
+                ++idx;
+            }
+            Constant *name = ConstantDataArray::getString(module.getContext(), object.class_name.c_str());
+            AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
+            builder.CreateStore(name, str);
+            Value *variables_sz = ConstantInt::get(builder.getInt64Ty(), object.object_types.size());
+            AllocaInst *stack_value = builder.CreateAlloca(jit.getNamedType("struct.Object"), nullptr);
+            builder.CreateStore(str, builder.CreateStructGEP(jit.getNamedType("struct.Object"), stack_value, 0));
+            builder.CreateStore(variables_sz, builder.CreateStructGEP(jit.getNamedType("struct.Object"), stack_value, 1));
+            builder.CreateStore(array_value, builder.CreateStructGEP(jit.getNamedType("struct.Object"), stack_value, 2));
+            value = stack_value;
+            break;
+        }
+        default:
+            UnexpectedError0(BadType);
+    }
+    return value;
 }
 
 } // namespace abaci::codegen

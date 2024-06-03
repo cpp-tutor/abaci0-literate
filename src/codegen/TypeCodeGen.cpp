@@ -224,7 +224,7 @@ void TypeEvalGen::operator()(const abaci::ast::ExprNode& node) const {
     }
 }
 
-AbaciValue::Type TypeEvalGen::promote(Environment::DefineScope::Type type_a, Environment::DefineScope::Type type_b) const {
+AbaciValue::Type TypeEvalGen::promote(const Environment::DefineScope::Type& type_a, const Environment::DefineScope::Type& type_b) const {
     if (!std::holds_alternative<AbaciValue::Type>(type_a) || !std::holds_alternative<AbaciValue::Type>(type_b)) {
         LogicError0(NoObject);
     }

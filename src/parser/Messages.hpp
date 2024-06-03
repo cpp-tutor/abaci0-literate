@@ -34,7 +34,6 @@ MESSAGE(NoSymbol, "Failed to add symbols to module.");
 MESSAGE(NoJITFunc, "JIT function not found.");
 // codegen/ExprCodeGen.cpp
 MESSAGE(NoAssignObject, "Cannot assign objects.");
-MESSAGE(BadReturnType, "Bad type for return value.");
 MESSAGE(CallableNotExist, "No function or class called \'{}\'.");
 MESSAGE(BadObject, "Not an object.");
 MESSAGE(BadConvSource, "Bad source conversion type.");
@@ -61,6 +60,6 @@ MESSAGE(InitialPrompt, "Abaci0 version {}\nEnter code, or a blank line to end:\n
 MESSAGE(InputPrompt, "> ");
 MESSAGE(ContinuationPrompt, ". ");
 MESSAGE(SyntaxError, "Syntax error.");
-MESSAGE(Version, "1.0.0 (2024-May-27)");
+MESSAGE(Version, "1.0.1 (2024-Jun-03)");
 
 #endif
