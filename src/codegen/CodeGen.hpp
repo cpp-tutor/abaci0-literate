@@ -91,7 +91,7 @@ public:
         return stack.front();
     }
     void operator()(const abaci::ast::ExprNode&) const;
-    AbaciValue::Type promote(Environment::DefineScope::Type, Environment::DefineScope::Type) const;
+    AbaciValue::Type promote(const Environment::DefineScope::Type&, const Environment::DefineScope::Type&) const;
 };
 
 class TypeCodeGen {

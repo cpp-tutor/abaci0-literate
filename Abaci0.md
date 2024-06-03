@@ -267,7 +267,7 @@ public:
         std::shared_ptr<DefineScope> enclosing;
     public:
         DefineScope(std::shared_ptr<DefineScope> enclosing = nullptr) : enclosing{ enclosing } {}
-        void setType(const std::string& name, const Type type);
+        void setType(const std::string& name, const Type& type);
         Type getType(const std::string& name) const;
         bool isDefined(const std::string& name) const;
         std::shared_ptr<DefineScope> getEnclosing() { return enclosing; }
@@ -2066,7 +2066,7 @@ public:
         return stack.front();
     }
     void operator()(const abaci::ast::ExprNode&) const;
-    AbaciValue::Type promote(Environment::DefineScope::Type, Environment::DefineScope::Type) const;
+    AbaciValue::Type promote(const Environment::DefineScope::Type&, const Environment::DefineScope::Type&) const;
 };
 
 class TypeCodeGen {
