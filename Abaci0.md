@@ -334,7 +334,7 @@ private:
 };
 ```
 
-The function `mangled()` takes a function name and its input parameter types and returns a unique mangled name, used for Abaci0 function instantiation as unique LLVM functions, while `environmentTypeToType()` converts a (possibly composite) `DefineScope` type to a simple integer value. The equality-comparison operator for `DefineScope::Type` is also declared here.
+The function `mangled()` takes a function name and its input parameter types and returns a unique mangled name, used for Abaci0 function instantiation as unique LLVM functions, while `environmentTypeToType()` converts a (possibly composite) `DefineScope` type to a simple integer value. The equality-comparison operator for `DefineScope::Type` is also declared here, as are aliases for an object's "this pointer" and return value name.
 
 ```cpp
 std::string mangled(const std::string& name, const std::vector<Environment::DefineScope::Type>& types);
@@ -344,6 +344,8 @@ AbaciValue::Type environmentTypeToType(const Environment::DefineScope::Type& env
 bool operator==(const Environment::DefineScope::Type& lhs, const Environment::DefineScope::Type& rhs);
 
 } // namespace abaci::utility
+
+inline const char *RETURN_VAR = "_return", *THIS_VAR = "_this";
 
 #endif
 ```
@@ -777,7 +779,7 @@ Functions `setObjectData()` and `getObjectData()` perform lookup of an object by
 
 ```cpp
 void setObjectData(Environment *environment, char *name, int *indices, AbaciValue *value) {
-    auto data = (strcmp(name, "_this") == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
+    auto data = (strcmp(name, THIS_VAR) == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
     while (*indices != -1) {
         data = &data->value.object->variables[*indices];
         ++indices;
@@ -786,7 +788,7 @@ void setObjectData(Environment *environment, char *name, int *indices, AbaciValu
 }
 
 AbaciValue *getObjectData(Environment *environment, char *name, int *indices) {
-    auto data = (strcmp(name, "_this") == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
+    auto data = (strcmp(name, THIS_VAR) == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
     while (*indices != -1) {
         data = &data->value.object->variables[*indices];
         ++indices;
@@ -1319,6 +1321,7 @@ The file `parser/Parse.cpp` is structured in the following way:
 Most of the contents of namespaces `abaci::utility` and `abaci::ast` are used by this implementation file, however individual `using` declarations (rather than `using namespace`) have been used. (Only five built-in X3 parser objects are used, as `x3::alpha`, `x3::digit` and `x3::xdigit` are not compatible with UTF-8 input.)
 
 ```cpp
+
 namespace abaci::parser {
 
 namespace x3 = boost::spirit::x3;
@@ -1509,7 +1512,7 @@ auto makeVariable = [](auto& ctx){
 };
 
 auto makeThisPtr = [](auto& ctx){
-    _val(ctx) = Variable("_this");
+    _val(ctx) = Variable(THIS_VAR);
 };
 ```
 
@@ -1617,7 +1620,7 @@ const auto variable_def = identifier[makeVariable];
 const auto this_ptr_def = lit(THIS)[makeThisPtr];
 const auto function_value_call_def = identifier >> call_args;
 const auto data_value_call_def = variable >> +( DOT >> variable );
-const auto this_value_call_def = this_ptr >> +( DOT >> variable );
+const auto this_value_call_def = this_ptr >> *( DOT >> variable );
 const auto data_method_call_def = variable >> DOT >> *( variable >> DOT ) >> identifier >> call_args;
 const auto this_method_call_def = this_ptr >> DOT >> *( variable >> DOT ) >> identifier >> call_args;
 const auto user_input_def = lit(INPUT);
@@ -1968,7 +1971,7 @@ MESSAGE(InitialPrompt, "Abaci0 version {}\nEnter code, or a blank line to end:\n
 MESSAGE(InputPrompt, "> ");
 MESSAGE(ContinuationPrompt, ". ");
 MESSAGE(SyntaxError, "Syntax error.");
-MESSAGE(Version, "1.0.1 (2024-Jun-03)");
+MESSAGE(Version, "1.0.2 (2024-Jun-22)");
 ```
 
 ## Directory `codegen`
@@ -2250,8 +2253,8 @@ If a `CallNode` is found, things are slightly more complicated. Firstly it must 
                         builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), true) });
                     }
                     auto type = jit.getCache()->getFunctionInstantiationType(call.name, types);
-                    environment->getCurrentDefineScope()->setType("_return", type);
-                    Constant *name = ConstantDataArray::getString(module.getContext(), "_return");
+                    environment->getCurrentDefineScope()->setType(RETURN_VAR, type);
+                    Constant *name = ConstantDataArray::getString(module.getContext(), RETURN_VAR);
                     AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
                     builder.CreateStore(name, str);
                     auto return_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
@@ -2429,8 +2432,8 @@ Method calls reuse a significant amount of logic from both data member access an
                 builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), true) });
             }
             auto type = jit.getCache()->getFunctionInstantiationType(function_name, types);
-            environment->getCurrentDefineScope()->setType("_return", type);
-            Constant *name = ConstantDataArray::getString(module.getContext(), "_return");
+            environment->getCurrentDefineScope()->setType(RETURN_VAR, type);
+            Constant *name = ConstantDataArray::getString(module.getContext(), RETURN_VAR);
             AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
             builder.CreateStore(name, str);
             auto return_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
@@ -3512,8 +3515,8 @@ void StmtCodeGen::codeGen(const FunctionCall& function_call) const {
         builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), true) });
     }
     auto type = jit.getCache()->getFunctionInstantiationType(function_call.name, types);
-    environment->getCurrentDefineScope()->setType("_return", type);
-    Constant *name = ConstantDataArray::getString(module.getContext(), "_return");
+    environment->getCurrentDefineScope()->setType(RETURN_VAR, type);
+    Constant *name = ConstantDataArray::getString(module.getContext(), RETURN_VAR);
     AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
     builder.CreateStore(name, str);
     auto return_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
@@ -3535,7 +3538,7 @@ void StmtCodeGen::codeGen(const ReturnStmt& return_stmt) const {
     ExprCodeGen expr(jit);
     expr(return_stmt.expression);
     auto result = expr.get();
-    Constant *name = ConstantDataArray::getString(module.getContext(), "_return");
+    Constant *name = ConstantDataArray::getString(module.getContext(), RETURN_VAR);
     AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
     builder.CreateStore(name, str);
     auto abaci_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
@@ -3670,8 +3673,8 @@ void StmtCodeGen::codeGen(const MethodCall& method_call) const {
         builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), true) });
     }
     auto type = jit.getCache()->getFunctionInstantiationType(function_name, types);
-    environment->getCurrentDefineScope()->setType("_return", type);
-    Constant *name = ConstantDataArray::getString(module.getContext(), "_return");
+    environment->getCurrentDefineScope()->setType(RETURN_VAR, type);
+    Constant *name = ConstantDataArray::getString(module.getContext(), RETURN_VAR);
     AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
     builder.CreateStore(name, str);
     auto return_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
@@ -3759,6 +3762,7 @@ void StmtCodeGen::operator()(const StmtNode& stmt) const {
 The code for these functions is best examined with reference to the other two implementation files in this directory. It is mostly a "bare-bones" implementation using the minimal amount of code to ensure that function return-type information can be gleaned from the AST.
 
 ```cpp
+
 using namespace llvm;
 
 namespace abaci::codegen {
@@ -3819,7 +3823,7 @@ A `CallNode` of type `Cache::CacheFunction` causes a scope switch to implement a
                     }
                     cache->addFunctionInstantiation(call.name, types, environment);
                     auto return_type = cache->getFunctionInstantiationType(call.name, types);
-                    environment->getCurrentDefineScope()->setType("_return", return_type);
+                    environment->getCurrentDefineScope()->setType(RETURN_VAR, return_type);
                     environment->setCurrentDefineScope(current_scope);
                     push(return_type);
                     break;
@@ -3874,7 +3878,7 @@ A method call is evaluated to determine its object and return types, creating a 
             }
             auto current_scope = environment->getCurrentDefineScope();
             environment->beginDefineScope(environment->getGlobalDefineScope());
-            environment->getCurrentDefineScope()->setType("_this", type);
+            environment->getCurrentDefineScope()->setType(THIS_VAR, type);
             for (auto arg_type = types.begin(); const auto& parameter : cache_function.parameters) {
                 auto type = *arg_type++;
                 if (std::holds_alternative<AbaciValue::Type>(type)) {
@@ -3884,7 +3888,7 @@ A method call is evaluated to determine its object and return types, creating a 
             }
             cache->addFunctionInstantiation(function_name, types, environment);
             auto return_type = cache->getFunctionInstantiationType(function_name, types);
-            environment->getCurrentDefineScope()->setType("_return", return_type);
+            environment->getCurrentDefineScope()->setType(RETURN_VAR, return_type);
             environment->setCurrentDefineScope(current_scope);
             push(return_type);
             break;
@@ -3897,7 +3901,7 @@ Access to data members inspects the instantiation type for the object and return
         case ExprNode::DataNode: {
             const auto& data = std::get<DataCall>(node.get());
             if (!environment->getCurrentDefineScope()->isDefined(data.name.get())) {
-                LogicError1(VarNotExist, data.name.get());
+                LogicError1(VarNotExist, (data.name.get() == THIS_VAR) ? THIS : data.name.get());
             }
             auto type = environment->getCurrentDefineScope()->getType(data.name.get());
             for (const auto& member : data.member_list) {
@@ -4179,7 +4183,7 @@ void TypeCodeGen::codeGen(const FunctionCall& function_call) const {
     }
     cache->addFunctionInstantiation(function_call.name, types, environment);
     auto return_type = cache->getFunctionInstantiationType(function_call.name, types);
-    environment->getCurrentDefineScope()->setType("_return", return_type);
+    environment->getCurrentDefineScope()->setType(RETURN_VAR, return_type);
     environment->setCurrentDefineScope(current_scope);
 }
 ```
@@ -4288,7 +4292,7 @@ void TypeCodeGen::codeGen(const MethodCall& method_call) const {
     }
     auto current_scope = environment->getCurrentDefineScope();
     environment->beginDefineScope(environment->getGlobalDefineScope());
-    environment->getCurrentDefineScope()->setType("_this", type);
+    environment->getCurrentDefineScope()->setType(THIS_VAR, type);
     for (auto arg_type = types.begin(); const auto& parameter : cache_function.parameters) {
         auto type = *arg_type++;
         if (std::holds_alternative<AbaciValue::Type>(type)) {
@@ -4298,7 +4302,7 @@ void TypeCodeGen::codeGen(const MethodCall& method_call) const {
     }
     cache->addFunctionInstantiation(function_name, types, environment);
     auto return_type = cache->getFunctionInstantiationType(function_name, types);
-    environment->getCurrentDefineScope()->setType("_return", return_type);
+    environment->getCurrentDefineScope()->setType(RETURN_VAR, return_type);
     environment->setCurrentDefineScope(current_scope);
 }
 ```

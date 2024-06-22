@@ -139,8 +139,8 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                         builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), true) });
                     }
                     auto type = jit.getCache()->getFunctionInstantiationType(call.name, types);
-                    environment->getCurrentDefineScope()->setType("_return", type);
-                    Constant *name = ConstantDataArray::getString(module.getContext(), "_return");
+                    environment->getCurrentDefineScope()->setType(RETURN_VAR, type);
+                    Constant *name = ConstantDataArray::getString(module.getContext(), RETURN_VAR);
                     AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
                     builder.CreateStore(name, str);
                     auto return_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));
@@ -303,8 +303,8 @@ void ExprCodeGen::operator()(const abaci::ast::ExprNode& node) const {
                 builder.CreateCall(module.getFunction("setVariable"), { typed_environment_ptr, builder.CreateBitCast(str, builder.getInt8PtrTy()), abaci_value, ConstantInt::get(builder.getInt1Ty(), true) });
             }
             auto type = jit.getCache()->getFunctionInstantiationType(function_name, types);
-            environment->getCurrentDefineScope()->setType("_return", type);
-            Constant *name = ConstantDataArray::getString(module.getContext(), "_return");
+            environment->getCurrentDefineScope()->setType(RETURN_VAR, type);
+            Constant *name = ConstantDataArray::getString(module.getContext(), RETURN_VAR);
             AllocaInst *str = builder.CreateAlloca(name->getType(), nullptr);
             builder.CreateStore(name, str);
             auto return_value = builder.CreateAlloca(jit.getNamedType("struct.AbaciValue"));

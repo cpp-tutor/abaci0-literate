@@ -1,6 +1,7 @@
 #include "CodeGen.hpp"
 #include "utility/Utility.hpp"
 #include "parser/Messages.hpp"
+#include "parser/Keywords.hpp"
 #include <llvm/IR/Constants.h>
 
 using namespace llvm;
@@ -77,7 +78,7 @@ void TypeEvalGen::operator()(const abaci::ast::ExprNode& node) const {
                     }
                     cache->addFunctionInstantiation(call.name, types, environment);
                     auto return_type = cache->getFunctionInstantiationType(call.name, types);
-                    environment->getCurrentDefineScope()->setType("_return", return_type);
+                    environment->getCurrentDefineScope()->setType(RETURN_VAR, return_type);
                     environment->setCurrentDefineScope(current_scope);
                     push(return_type);
                     break;
@@ -122,7 +123,7 @@ void TypeEvalGen::operator()(const abaci::ast::ExprNode& node) const {
             }
             auto current_scope = environment->getCurrentDefineScope();
             environment->beginDefineScope(environment->getGlobalDefineScope());
-            environment->getCurrentDefineScope()->setType("_this", type);
+            environment->getCurrentDefineScope()->setType(THIS_VAR, type);
             for (auto arg_type = types.begin(); const auto& parameter : cache_function.parameters) {
                 auto type = *arg_type++;
                 if (std::holds_alternative<AbaciValue::Type>(type)) {
@@ -132,7 +133,7 @@ void TypeEvalGen::operator()(const abaci::ast::ExprNode& node) const {
             }
             cache->addFunctionInstantiation(function_name, types, environment);
             auto return_type = cache->getFunctionInstantiationType(function_name, types);
-            environment->getCurrentDefineScope()->setType("_return", return_type);
+            environment->getCurrentDefineScope()->setType(RETURN_VAR, return_type);
             environment->setCurrentDefineScope(current_scope);
             push(return_type);
             break;
@@ -140,7 +141,7 @@ void TypeEvalGen::operator()(const abaci::ast::ExprNode& node) const {
         case ExprNode::DataNode: {
             const auto& data = std::get<DataCall>(node.get());
             if (!environment->getCurrentDefineScope()->isDefined(data.name.get())) {
-                LogicError1(VarNotExist, data.name.get());
+                LogicError1(VarNotExist, (data.name.get() == THIS_VAR) ? THIS : data.name.get());
             }
             auto type = environment->getCurrentDefineScope()->getType(data.name.get());
             for (const auto& member : data.member_list) {
@@ -392,7 +393,7 @@ void TypeCodeGen::codeGen(const FunctionCall& function_call) const {
     }
     cache->addFunctionInstantiation(function_call.name, types, environment);
     auto return_type = cache->getFunctionInstantiationType(function_call.name, types);
-    environment->getCurrentDefineScope()->setType("_return", return_type);
+    environment->getCurrentDefineScope()->setType(RETURN_VAR, return_type);
     environment->setCurrentDefineScope(current_scope);
 }
 
@@ -481,7 +482,7 @@ void TypeCodeGen::codeGen(const MethodCall& method_call) const {
     }
     auto current_scope = environment->getCurrentDefineScope();
     environment->beginDefineScope(environment->getGlobalDefineScope());
-    environment->getCurrentDefineScope()->setType("_this", type);
+    environment->getCurrentDefineScope()->setType(THIS_VAR, type);
     for (auto arg_type = types.begin(); const auto& parameter : cache_function.parameters) {
         auto type = *arg_type++;
         if (std::holds_alternative<AbaciValue::Type>(type)) {
@@ -491,7 +492,7 @@ void TypeCodeGen::codeGen(const MethodCall& method_call) const {
     }
     cache->addFunctionInstantiation(function_name, types, environment);
     auto return_type = cache->getFunctionInstantiationType(function_name, types);
-    environment->getCurrentDefineScope()->setType("_return", return_type);
+    environment->getCurrentDefineScope()->setType(RETURN_VAR, return_type);
     environment->setCurrentDefineScope(current_scope);
 }
 

@@ -2,6 +2,7 @@
 #include "Keywords.hpp"
 #include "Messages.hpp"
 #include "utility/Utility.hpp"
+#include "utility/Environment.hpp"
 #include "utility/Report.hpp"
 #include "ast/Expr.hpp"
 #include "ast/Stmt.hpp"
@@ -210,7 +211,7 @@ auto makeVariable = [](auto& ctx){
 };
 
 auto makeThisPtr = [](auto& ctx){
-    _val(ctx) = Variable("_this");
+    _val(ctx) = Variable(THIS_VAR);
 };
 
 auto makeConversion = [](auto& ctx){
@@ -290,7 +291,7 @@ const auto variable_def = identifier[makeVariable];
 const auto this_ptr_def = lit(THIS)[makeThisPtr];
 const auto function_value_call_def = identifier >> call_args;
 const auto data_value_call_def = variable >> +( DOT >> variable );
-const auto this_value_call_def = this_ptr >> +( DOT >> variable );
+const auto this_value_call_def = this_ptr >> *( DOT >> variable );
 const auto data_method_call_def = variable >> DOT >> *( variable >> DOT ) >> identifier >> call_args;
 const auto this_method_call_def = this_ptr >> DOT >> *( variable >> DOT ) >> identifier >> call_args;
 const auto user_input_def = lit(INPUT);

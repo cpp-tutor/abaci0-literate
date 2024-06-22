@@ -62,6 +62,8 @@ Future development of this project is likely to be fixes only, no major language
 
 * **1.0.1** (2024-Jun-03) Functions and methods can now return object values, which allows for creation of factory functions.
 
+* **1.0.2** (2024-Jun-22) Minor code changes related to this pointer and return value tracking.
+
 ## License
 
 All writing and source code released under a Creative Commmons License, &copy;2023-24 Richard Spencer

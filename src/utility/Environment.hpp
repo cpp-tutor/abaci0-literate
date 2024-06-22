@@ -91,4 +91,6 @@ bool operator==(const Environment::DefineScope::Type& lhs, const Environment::De
 
 } // namespace abaci::utility
 
+inline const char *RETURN_VAR = "_return", *THIS_VAR = "_this";
+
 #endif

@@ -106,7 +106,7 @@ AbaciValue *getVariable(Environment *environment, char *name) {
 }
 
 void setObjectData(Environment *environment, char *name, int *indices, AbaciValue *value) {
-    auto data = (strcmp(name, "_this") == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
+    auto data = (strcmp(name, THIS_VAR) == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
     while (*indices != -1) {
         data = &data->value.object->variables[*indices];
         ++indices;
@@ -115,7 +115,7 @@ void setObjectData(Environment *environment, char *name, int *indices, AbaciValu
 }
 
 AbaciValue *getObjectData(Environment *environment, char *name, int *indices) {
-    auto data = (strcmp(name, "_this") == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
+    auto data = (strcmp(name, THIS_VAR) == 0) ? environment->getThisPtr() : environment->getCurrentScope()->getValue(name);
     while (*indices != -1) {
         data = &data->value.object->variables[*indices];
         ++indices;
