@@ -2,7 +2,7 @@
 
 ## About
 
-The file `Abaci0.md` is a human-readable manuscript intended a full description of how this compiler was written from scratch, and the basics of how it operates. This file and all of the contents of directory `src`, plus the `CMakeLists.txt` CMake script, were machine-extracted from the master literate source file `Abaci0.lit`.
+The file `Abaci0.md` is a human-readable manuscript intended to be a full description of how this compiler was written from scratch, as well as describing the basics of how it operates. This file and all of the contents of directory `src`, plus the `CMakeLists.txt` CMake script, were machine-extracted from the master literate source file `Abaci0.lit`.
 
 ## Pre-requisites
 
